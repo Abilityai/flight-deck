@@ -1,0 +1,2000 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flight Deck</title>
+<style>
+  :root {
+    --u: min(1vw, 1.6vh);
+    --bg: #04060b; --ink: #dbe6f6; --dim: #6b7a93; --faint: #2a3446;
+    --line: rgba(130, 170, 230, .13);
+    --cyan: #58e1ff; --amber: #ffb04a; --green: #5df2a1; --red: #ff5d73; --violet: #a78bfa;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, "SF Pro Display", "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink);
+    font-family: var(--mono); font-size: calc(var(--u) * 1.02); cursor: none;
+    -webkit-font-smoothing: antialiased; user-select: none; }
+  #bg { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #stage { position: fixed; inset: 0; padding: calc(var(--u) * 3) calc(var(--u) * 3.2);
+    display: grid; grid-template-columns: 23fr 50fr 27fr; grid-template-rows: 1fr auto;
+    gap: calc(var(--u) * 2); will-change: transform; }
+  .label { color: var(--dim); letter-spacing: .22em; text-transform: uppercase; font-size: .78em; }
+  .rule { height: 1px; background: linear-gradient(90deg, var(--line), transparent); margin: calc(var(--u) * .9) 0; }
+
+  /* explicit cells, because #talk overlays the middle and right columns */
+  #left { grid-column: 1; grid-row: 1; } #mid { grid-column: 2; grid-row: 1; } #right { grid-column: 3; grid-row: 1; }
+  /* TALK mode: the voice agent's own page in a frame. It stays loaded (and listening) in the other views. */
+  #talk { grid-column: 2 / 4; grid-row: 1; z-index: 5; opacity: 0; pointer-events: none; min-height: 0;
+    display: flex; flex-direction: column; margin-top: calc(var(--u) * 1.6); }
+  #talk-bar { display: flex; align-items: baseline; gap: 1.2em; padding: 0 .2em calc(var(--u) * .6); white-space: nowrap; }
+  #talk-msg { flex: 1; color: var(--dim); font-size: .8em; overflow: hidden; text-overflow: ellipsis; }
+  #talk-msg.warn { color: var(--amber) !important; }
+  #talk-warm { display: flex; align-items: center; gap: .7em; align-self: center; color: var(--amber); font-size: .72em;
+    letter-spacing: .1em; text-transform: uppercase; }
+  #talk-warm[hidden] { display: none; }
+  #talk-warm b { display: block; width: 14em; height: .5em; border: 1px solid var(--line); border-radius: .3em; overflow: hidden; }
+  #talk-warm i { display: block; height: 100%; width: 0; background: var(--amber); transition: width .25s linear; }
+  #talk-bar button { font: inherit; font-size: .76em; letter-spacing: .1em; text-transform: uppercase; color: var(--ink);
+    background: rgba(130, 170, 230, .08); border: 1px solid var(--line); border-radius: calc(var(--u) * .25);
+    padding: .35em .9em; cursor: pointer; }
+  #talk-bar button:hover { background: rgba(130, 170, 230, .2); }
+  #talk-bar button[hidden] { display: none; }
+  #talk-body { flex: 1; min-height: 0; display: flex; gap: calc(var(--u) * .6); }
+  #talk-frame, #orb-frame { flex: 1 1 0; min-width: 0; height: 100%; border: 1px solid var(--line); border-radius: calc(var(--u) * .3);
+    background: #000; }
+  #orb-frame { display: none; flex-grow: 1.15; pointer-events: none; }   /* nothing to click there, so it never takes the keys */
+  body.v-orb #orb-frame { display: block; }
+  /* The second voice agent's view takes the whole window: voice on one half, the orb on the other; the rest steps aside */
+  #left, #bottom { transition: opacity .6s; }
+  body.v-orb #left, body.v-orb #bottom { opacity: 0; pointer-events: none; }
+  body.v-orb #talk { grid-column: 1 / 4; grid-row: 1 / 3; }
+  body.v-orb #orb-frame { flex-grow: 1; }
+  #talk-go { color: var(--bg) !important; background: var(--green) !important; border-color: var(--green) !important; font-weight: 600; }
+  #talk-go.on { background: var(--red) !important; border-color: var(--red) !important; color: #fff !important; }
+  #talk-bar kbd { font: inherit; font-size: .72em; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 .4em; margin-left: .5em; }
+  /* TRINITY view (Marvin's desk). The whole window, and only the main Trinity instance. One thing holds
+     the eye: the STAGE in the middle, a card Marvin's loop or Marvin puts up. Around it, things to
+     glance at, with as little text as possible: counts and dots on top, the voice corner on the left,
+     what changed on the right, the five busiest agents along the bottom. */
+  #tv { grid-column: 1 / 4; grid-row: 1 / 3; z-index: 4; opacity: 0; pointer-events: none; min-height: 0; margin-top: calc(var(--u) * 1.6);
+    display: grid; grid-template-rows: auto 1fr auto; gap: calc(var(--u) * 1); }
+  body.v-tv #left, body.v-tv #bottom { opacity: 0; pointer-events: none; }
+  body.v-tv #talk { position: absolute; margin: 0; grid-area: auto; }   /* auto placement: offsets count from the stage, not from a grid cell */
+  body.v-tv #talk-bar { flex-wrap: wrap; row-gap: .45em; gap: .8em; } body.v-tv #talk-msg { flex-basis: 100%; order: 9; }
+  body.v-tv #talk-bar kbd { display: none; }
+  body.v-tv { cursor: auto; }
+  #tv-edge { display: grid; grid-template-columns: auto auto 1fr 1fr 1.15fr 1.15fr; gap: calc(var(--u) * .9); }
+  #tv-logo { display: flex; align-items: center; color: var(--ink); }
+  #tv-logo svg { width: calc(var(--u) * 3.6); height: calc(var(--u) * 3.6); display: block; margin: 0 calc(var(--u) * -.3); }
+  #tv .tile { border: 1px solid var(--line); border-radius: calc(var(--u) * .3); background: rgba(130, 170, 230, .028);
+    padding: calc(var(--u) * .55) calc(var(--u) * .9); display: grid; grid-template-columns: auto 1fr; column-gap: calc(var(--u) * 1); align-items: center; min-width: 0; }
+  #tv .tile[data-list] { cursor: pointer; } #tv .tile[data-list]:hover, #tv .tile.on { border-color: rgba(130, 170, 230, .45); }
+  #tv .tile .n { font-family: var(--sans); font-weight: 200; font-size: calc(var(--u) * 2.5); line-height: 1; font-variant-numeric: tabular-nums; }
+  #tv .tile .n small { display: block; font-family: var(--mono); font-weight: 400; font-size: .22em; letter-spacing: .2em; color: var(--dim); text-transform: uppercase; margin-top: .5em; white-space: nowrap; }
+  #tv .tile .x { min-width: 0; }
+  #tv .tile .s { color: var(--dim); font-size: .7em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: .45em; }
+  #tv .tile .s em { font-style: normal; color: var(--amber); } #tv .tile .s em.crit { color: var(--red); } #tv .tile .s b { color: var(--ink); font-weight: 400; }
+  #tv .dots { display: flex; flex-wrap: wrap; gap: 3px; max-height: calc(var(--u) * 1.5); overflow: hidden; }
+  #tv .dots i { width: calc(var(--u) * .42); height: calc(var(--u) * .42); border-radius: 50%; background: #2a3446; }
+  #tv .dots i.r { background: var(--red); box-shadow: 0 0 .5em var(--red); } #tv .dots i.a { background: var(--amber); } #tv .dots i.g { background: var(--green); opacity: .7; }
+  #tv .dots i.h { background: none; border: 1px solid var(--amber); }
+  #tv .bars { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 2px; align-items: end; height: calc(var(--u) * 1.5); }
+  #tv .bars u { display: block; background: #26364e; border-radius: 1px 1px 0 0; min-height: 1px; text-decoration: none; }
+  #tv .bars u.bad { background: var(--red); } #tv .bars u:last-child { background: var(--cyan); }
+  #tv .lights { display: flex; flex-wrap: wrap; gap: .25em 1em; font-size: .72em; color: var(--ink); grid-column: 1 / 3; }
+  #tv .lights span { white-space: nowrap; opacity: .9; } #tv .lights span.dim { color: var(--dim); }
+  #tv .lights i { display: inline-block; width: .55em; height: .55em; border-radius: 50%; margin-right: .45em; background: var(--green); box-shadow: 0 0 .5em var(--green); }
+  #tv .lights i.a { background: var(--amber); box-shadow: none; } #tv .lights i.r { background: var(--red); box-shadow: 0 0 .6em var(--red); }
+  #tv-main { display: grid; grid-template-columns: 19fr 46fr 35fr; gap: calc(var(--u) * 1.2); min-height: 0; }
+  #tv-main > div { min-height: 0; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+  /* the stage */
+  #tv-stage { border: 1px solid rgba(130, 170, 230, .22); border-radius: calc(var(--u) * .5); background: rgba(130, 170, 230, .035);
+    padding: calc(var(--u) * 1.5) calc(var(--u) * 2) calc(var(--u) * 1.1); font-family: var(--sans); }
+  #tv-stage.r0 { border-color: rgba(255, 93, 115, .55); } #tv-stage.r1 { border-color: rgba(255, 93, 115, .35); } #tv-stage.r2 { border-color: rgba(255, 176, 74, .4); }
+  @keyframes tvnew { from { box-shadow: 0 0 0 2px var(--cyan), 0 0 3em rgba(88, 225, 255, .5); } to { box-shadow: none; } }
+  #tv-stage.fresh { animation: tvnew 2.4s ease-out; }
+  #tv-stage .kick { display: flex; justify-content: space-between; font-family: var(--mono); font-size: .72em; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); }
+  #tv-stage .kick b { font-weight: 400; color: var(--amber); } #tv-stage.r0 .kick b, #tv-stage.r1 .kick b { color: var(--red); }
+  #tv-stage > * { flex: none; }
+  #tv-stage h2 { font-weight: 300; font-size: calc(var(--u) * 2.05); line-height: 1.16; letter-spacing: -.005em; margin: .4em 0 .5em; }
+  #tv-stage .take { border-left: 2px solid var(--amber); padding: .1em 0 .1em .9em; margin-bottom: .9em; font-size: 1.04em; line-height: 1.42; flex: 0 1 auto; min-height: 3.2em; overflow: hidden; }
+  #tv-stage .take small { display: block; font-family: var(--mono); font-size: .6em; letter-spacing: .22em; color: var(--amber); margin-bottom: .3em; }
+  #tv-stage .take i { font-style: normal; color: var(--dim); }
+  #tv-stage .opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(10.5em, 1fr)); gap: calc(var(--u) * .6); margin-bottom: .9em; flex: 0 2 auto; min-height: 4.5em; overflow: hidden; }
+  #tv-stage .opt { border: 1px solid var(--line); border-radius: calc(var(--u) * .3); padding: .55em .8em .6em; min-width: 0; background: rgba(0, 0, 0, .18); }
+  #tv-stage .opt b { display: block; font-weight: 500; font-size: 1em; margin-bottom: .25em; }
+  #tv-stage .opt span { color: var(--dim); font-size: .78em; line-height: 1.36; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  #tv-stage .opt.rec { border-color: var(--amber); } #tv-stage .opt.rec b::after { content: "recommended"; font-family: var(--mono); font-weight: 400; font-size: .58em; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--amber); margin-left: .9em; }
+  #tv-stage .body { flex: 1 1 0; min-height: 0; overflow: hidden; color: var(--ink); opacity: .78; font-size: .86em; line-height: 1.45;
+    -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 2.5em), transparent); mask-image: linear-gradient(180deg, #000 calc(100% - 2.5em), transparent); }
+  #tv-stage .body b { font-weight: 600; color: var(--ink); }
+  #tv-stage .facts { display: flex; flex-wrap: wrap; gap: .3em 1.4em; font-family: var(--mono); font-size: .68em; color: var(--dim); margin: .5em 0 0; max-height: 1.5em; overflow: hidden; }
+  #tv-stage .facts b { font-weight: 400; color: var(--ink); }
+  #tv-stage .foot { font-family: var(--mono); font-size: .7em; color: var(--dim); padding-top: .7em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tv-stage .foot b { font-weight: 400; color: var(--ink); }
+  #tv-stage .trow { display: grid; grid-template-columns: 3.4em 1fr 9em 7em; column-gap: .8em; padding: .32em 0; border-bottom: 1px solid rgba(130, 170, 230, .07); font-size: .88em; white-space: nowrap; }
+  #tv-stage .trow span { color: var(--dim); font-family: var(--mono); font-size: .82em; overflow: hidden; text-overflow: ellipsis; } #tv-stage .trow b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+  #tv-stage .trow span.needs-decision, #tv-stage .trow span.blocked { color: var(--amber); }
+  #tv-stage .list { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; font-family: var(--mono); font-size: .8em; } #tv-stage .list::-webkit-scrollbar { display: none; }
+  #tv h5 { font-weight: 400; color: var(--dim); letter-spacing: .2em; text-transform: uppercase; font-size: .7em; padding: .75em 0 .3em; }
+  #tv h5:first-child { padding-top: .1em; }
+  #tv .ask { display: grid; grid-template-columns: 1em 2.7em 9.5em 1fr 4.4em; column-gap: .55em; align-items: baseline; padding: .24em 0;
+    white-space: nowrap; border-bottom: 1px solid rgba(130, 170, 230, .06); }
+  #tv .ask i, #tv .prj i { width: .52em; height: .52em; border-radius: 50%; border: 1px solid var(--dim); align-self: center; }
+  #tv .ask.critical i { background: var(--red); border-color: var(--red); box-shadow: 0 0 .7em var(--red); }
+  #tv .ask.high i { background: var(--amber); border-color: var(--amber); } #tv .ask.medium i { border-color: var(--amber); }
+  #tv .ask span { color: var(--dim); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+  #tv .ask span.old { color: var(--amber); } #tv .ask span.id { text-align: right; opacity: .7; }
+  #tv .ask b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; opacity: .92; } #tv .ask.critical b { color: var(--red); opacity: 1; }
+  #tv .prj { display: grid; grid-template-columns: 1em 1fr 5.2em 2.8em 2.8em; column-gap: .5em; align-items: baseline; padding: .24em 0;
+    white-space: nowrap; border-bottom: 1px solid rgba(130, 170, 230, .06); }
+  #tv .prj.off-track i { background: var(--red); border-color: var(--red); } #tv .prj.at-risk i { background: var(--amber); border-color: var(--amber); }
+  #tv .prj.on-track i { background: var(--green); border-color: var(--green); } #tv .prj.live b { color: var(--amber); }
+  #tv .prj b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; opacity: .92; }
+  #tv .prj span { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+  #tv .prj span.st { text-align: left; } #tv .prj span.at { color: var(--amber); }
+  /* DECIDE: the asks that wait for an answer, one at a time; the options are buttons */
+  #tv-decide { border: 1px solid rgba(255, 176, 74, .3); border-radius: calc(var(--u) * .5); background: rgba(255, 176, 74, .035);
+    padding: calc(var(--u) * 1.1) calc(var(--u) * 1.3) calc(var(--u) * .8); }
+  #tv-decide .label { display: flex; justify-content: space-between; color: var(--amber); }
+  #tv-decide .label span:last-child { letter-spacing: .04em; text-transform: none; color: var(--dim); }
+  #dq { flex: 1; min-height: 0; display: flex; flex-direction: column; font-family: var(--sans); overflow: hidden; }
+  #dq > * { flex: none; }
+  #dq .dq-k { font-family: var(--mono); font-size: .68em; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #dq .dq-k b { font-weight: 400; color: var(--amber); } #dq .dq-k b.critical { color: var(--red); }
+  #dq h3 { font-weight: 400; font-size: calc(var(--u) * 1.2); line-height: 1.25; margin: .45em 0 .7em; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  #dq .dq-opts { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: none; display: flex; flex-direction: column; gap: calc(var(--u) * .45); }
+  #dq .dq-opts::-webkit-scrollbar { display: none; }
+  #dq .dq-o { flex: none; border: 1px solid var(--line); border-radius: calc(var(--u) * .3); padding: .5em .75em .55em; background: rgba(0, 0, 0, .22); cursor: pointer; }
+  #dq .dq-o:hover { border-color: rgba(130, 170, 230, .5); background: rgba(130, 170, 230, .07); }
+  #dq .dq-o b { display: block; font-weight: 500; font-size: .95em; }
+  #dq .dq-o span { color: var(--dim); font-size: .74em; line-height: 1.34; margin-top: .2em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #dq .dq-o.rec b::after { content: "recommended"; font-family: var(--mono); font-weight: 400; font-size: .58em; letter-spacing: .14em; text-transform: uppercase; color: var(--amber); margin-left: .8em; }
+  #dq .dq-o.on { border-color: var(--green); background: rgba(93, 242, 161, .07); } #dq .dq-o.on span { -webkit-line-clamp: 6; }
+  #dq .dq-go { display: flex; gap: .6em; margin-top: .6em; }
+  #dq button { font: inherit; font-family: var(--mono); font-size: .72em; letter-spacing: .08em; text-transform: uppercase; color: var(--bg); background: var(--green);
+    border: 1px solid var(--green); border-radius: calc(var(--u) * .25); padding: .4em .9em; cursor: pointer; font-weight: 600; }
+  #dq button.quiet { color: var(--dim); background: none; border-color: var(--line); font-weight: 400; } #dq button.quiet:hover { color: var(--ink); }
+  #dq button:disabled { opacity: .5; cursor: default; }
+  #dq .dq-else { display: flex; gap: .5em; margin-top: calc(var(--u) * .6); }
+  #dq .dq-else input { flex: 1; min-width: 0; font: inherit; font-size: .82em; color: var(--ink); background: rgba(0, 0, 0, .3); border: 1px solid var(--line);
+    border-radius: calc(var(--u) * .25); padding: .4em .7em; outline: none; user-select: text; }
+  #dq .dq-else input:focus { border-color: rgba(130, 170, 230, .5); }
+  #dq .dq-else button { color: var(--ink); background: rgba(130, 170, 230, .1); border-color: var(--line); font-weight: 400; }
+  #dq .dq-nav { display: flex; justify-content: space-between; align-items: center; margin-top: calc(var(--u) * .6); font-family: var(--mono); font-size: .9em; color: var(--dim); }
+  #dq .dq-nav span { font-size: .7em; opacity: .7; }
+  #dq .dq-msg { font-family: var(--mono); font-size: .72em; color: var(--green); margin-bottom: .6em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #dq .dq-msg.err { color: var(--red); white-space: normal; }
+  /* bottom row: the lanes, and what changed */
+  #tv-bot { display: grid; grid-template-columns: 58fr 42fr; gap: calc(var(--u) * 1.5); min-height: 0; }
+  #tv-bot > div { min-width: 0; min-height: 0; overflow: hidden; }
+  #tv-rail { display: flex; flex-direction: column; }
+  /* the rail: what changed */
+  #tv-rail .label { display: flex; justify-content: space-between; } #tv-rail .label span { letter-spacing: .04em; text-transform: none; }
+  #tv-feed { flex: 1; min-height: 0; overflow: hidden; font-size: .7em; }
+  #tv-feed div { display: grid; grid-template-columns: 3.4em 1fr; padding: .12em 0; color: var(--ink); opacity: .85; line-height: 1.3; }
+  #tv-feed div span { color: var(--dim); } #tv-feed div b { font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #tv-feed div.f-bad b { color: var(--red); } #tv-feed div.f-ask b { color: var(--amber); } #tv-feed div.f-done b { color: var(--green); opacity: .9; } #tv-feed div.new { opacity: 1; }
+  #tv-next { font-size: .74em; flex: none; } #tv-next div { padding: .28em 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); opacity: .8; }
+  #tv-next div i { display: inline-block; width: .5em; height: .5em; border-radius: 50%; background: var(--amber); margin-right: .6em; } #tv-next div.r0 i, #tv-next div.r1 i { background: var(--red); }
+  /* the five busiest agents */
+  #tv-lanes { display: grid; grid-template-columns: 1fr; gap: calc(var(--u) * .2); align-content: start; }
+  #tv .tl { display: grid; grid-template-columns: 9.5em 1fr; column-gap: .8em; align-items: center; }
+  #tv .tl .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .7em; } #tv .tl .who b { font-family: var(--sans); font-weight: 500; font-size: 1.1em; margin-right: .5em; }
+  #tv .tl.live .who b { color: var(--amber); } #tv .tl .who span { color: var(--dim); font-variant-numeric: tabular-nums; }
+  #tv .tl .track { position: relative; height: calc(var(--u) * .55); background: rgba(130, 170, 230, .045); border-radius: 2px; overflow: hidden; }
+  #tv .tl .track i { position: absolute; top: 0; bottom: 0; min-width: 2px; background: var(--cyan); opacity: .8; border-radius: 1px; }
+  #tv .tl .track i.bad { background: var(--red); opacity: 1; } #tv .tl .track i.live { background: var(--amber); opacity: 1; box-shadow: 0 0 .8em var(--amber); }
+  #tv .tl.axis .track { height: auto; background: none; display: flex; justify-content: space-between; color: var(--dim); font-size: .62em; overflow: visible; }
+  /* the mode switch: click a name (or D S T, V for the voice conversation) */
+  #tabs { position: fixed; z-index: 8; top: calc(var(--u) * 1.15); left: 0; right: 0; display: flex; justify-content: center;
+    gap: calc(var(--u) * .5); pointer-events: none; }
+  #tabs button { pointer-events: auto; font: inherit; font-size: .72em; letter-spacing: .2em; color: var(--dim); background: none;
+    border: 1px solid transparent; border-radius: calc(var(--u) * .25); padding: .35em 1em; cursor: pointer; opacity: .75; }
+  #tabs button:hover { color: var(--ink); border-color: var(--line); opacity: 1; }
+  #tabs button.on { color: var(--ink); border-color: var(--line); background: rgba(130, 170, 230, .07); opacity: 1; }
+  #tabs #skin-btn { margin-left: calc(var(--u) * 1.2); font-size: .62em; opacity: .6; min-width: 9em; text-align: center; white-space: nowrap; }
+  /* Nothing in the row may change its width, or every button moves when the view changes: the note has a fixed
+     slot (mirrored on the left so the buttons stay centred), and a running conversation is a dot in a corner. */
+  #tabs::before { content: ""; flex: none; width: calc(.62em * 23 + .6em); }
+  #tabs button { position: relative; white-space: nowrap; flex: none; }
+  #tabs button.talking::after { content: ""; position: absolute; top: .3em; right: .35em; width: .42em; height: .42em; border-radius: 50%; background: var(--amber); }
+  #tabs button.live { color: var(--amber); border-color: rgba(255, 176, 74, .5); opacity: 1; }
+  #tabs i { font-style: normal; font-size: .62em; letter-spacing: .2em; color: var(--dim); align-self: center; margin-left: .6em; opacity: .7;
+    flex: none; width: 23em; order: 9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  body.mouse, body.v-talk { cursor: auto; }
+
+  /* left column */
+  #left { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  #left > * { flex: none; }
+  /* groups get a frame, so it is clear what belongs together */
+  .box { border: 1px solid var(--line); border-radius: calc(var(--u) * .3); background: rgba(130, 170, 230, .028);
+    padding: calc(var(--u) * .62) calc(var(--u) * .8) calc(var(--u) * .7); }
+  #left .box { margin-top: calc(var(--u) * .7); }
+  #left #tri-box { flex: 1 1 0; min-height: 0; overflow: hidden; }
+  /* Trinity instances: the label opens a menu to add one (address + MCP key), pick the one shown in full, remove one */
+  #tri-l { cursor: pointer; } #tri-l:hover { color: var(--ink); }
+  #tri-chip { font: inherit; font-size: .88em; letter-spacing: .14em; text-transform: uppercase; color: var(--ink); cursor: pointer; margin-left: .9em;
+    background: rgba(130, 170, 230, .1); border: 1px solid rgba(130, 170, 230, .35); border-radius: 999px; padding: .12em .75em .16em; opacity: .85; }
+  #tri-chip:hover { opacity: 1; background: rgba(130, 170, 230, .24); }
+  /* the TRINITY page: which instance, beside the logo; without a desk for it, the instances themselves */
+  #tv-who { display: flex; flex-direction: column; justify-content: center; gap: .35em; margin: 0 calc(var(--u) * 1.2) 0 calc(var(--u) * .5); }
+  #tv-who b { font-family: var(--sans); font-weight: 300; font-size: 1.5em; white-space: nowrap; }
+  #tv-chip { font: inherit; font-size: .7em; letter-spacing: .14em; text-transform: uppercase; color: var(--ink); cursor: pointer; align-self: flex-start;
+    background: rgba(130, 170, 230, .1); border: 1px solid rgba(130, 170, 230, .35); border-radius: 999px; padding: .2em .9em .25em; white-space: nowrap; }
+  #tv-chip:hover { background: rgba(130, 170, 230, .24); }
+  #tv-inst { display: none; }
+  #tv.plain #tv-edge { grid-template-columns: auto auto 1fr; } #tv.plain #tv-edge .tile, #tv.plain #tv-main, #tv.plain #tv-bot { display: none; }
+  #tv.plain #tv-inst { display: grid; grid-template-columns: repeat(auto-fill, minmax(24em, 1fr)); gap: calc(var(--u) * .9); align-content: start; min-height: 0; overflow: hidden; }
+  #tv-inst .card { border: 1px solid var(--line); border-radius: calc(var(--u) * .3); background: rgba(130, 170, 230, .028); padding: 1em 1.2em 1.1em; min-width: 0; }
+  #tv-inst .card.main { border-color: rgba(130, 170, 230, .45); grid-row: span 2; }
+  #tv-inst .card h3 { font-family: var(--sans); font-weight: 300; font-size: 1.5em; display: flex; justify-content: space-between; align-items: baseline; gap: .6em; margin: 0 0 .1em; }
+  #tv-inst .card h3 small { font-family: var(--mono); font-size: .45em; letter-spacing: .16em; text-transform: uppercase; color: var(--green); white-space: nowrap; }
+  #tv-inst .card h3 small.off { color: var(--red); } #tv-inst .card h3 small.wait { color: var(--dim); }
+  #tv-inst .host { color: var(--dim); font-size: .78em; margin-bottom: .8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #tv-inst .nums { display: flex; gap: 1.6em; margin: .2em 0 .7em; } #tv-inst .nums div { font-family: var(--sans); font-weight: 200; font-size: 2em; line-height: 1; }
+  #tv-inst .nums small { display: block; font-family: var(--mono); font-weight: 400; font-size: .32em; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); margin-top: .5em; white-space: nowrap; }
+  #tv-inst .nums { flex-wrap: wrap; row-gap: .6em; }
+  #tv-inst .nums .bad { color: var(--red); }
+  #tv-inst .rem { font-size: .86em; } #tv-inst .card .ti-btn { margin-top: .8em; }
+  #tv-inst .card.add { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; border-style: dashed; color: var(--dim); }
+  #tv-inst .card.add p { margin: 0; line-height: 1.45; }
+  .rem .note.sw { cursor: pointer; } .rem .note.sw:hover { color: var(--ink); }
+  .ti-btn { font: inherit; font-size: .9em; letter-spacing: .08em; color: var(--ink); background: rgba(130, 170, 230, .1);
+    border: 1px solid var(--line); border-radius: calc(var(--u) * .25); padding: .35em .9em; cursor: pointer; }
+  .ti-btn:hover { background: rgba(130, 170, 230, .24); } .ti-btn:disabled { opacity: .5; cursor: default; }
+  .ti-btn.go { color: var(--bg); background: var(--green); border-color: var(--green); font-weight: 600; }
+  #tri .ti-btn { margin-top: .6em; }
+  #tri-menu { position: fixed; z-index: 40; width: 27em; font-size: calc(var(--u) * .84); color: var(--ink); background: var(--bg);
+    border: 1px solid rgba(130, 170, 230, .4); border-radius: calc(var(--u) * .4); padding: .9em 1em 1em; cursor: auto;
+    box-shadow: 0 .6em 2.4em rgba(0, 0, 0, .55); }
+  #tri-menu h6 { font: inherit; font-size: .78em; color: var(--dim); letter-spacing: .2em; text-transform: uppercase; margin: 0 0 .5em; }
+  #tri-menu .ti-row { display: grid; grid-template-columns: 1em 1fr auto auto; column-gap: .6em; align-items: center; padding: .32em 0; white-space: nowrap; }
+  #tri-menu .ti-row i { width: .55em; height: .55em; border-radius: 50%; border: 1px solid var(--dim); }
+  #tri-menu .ti-row.main i { background: var(--green); border-color: var(--green); }
+  #tri-menu .ti-row b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; } #tri-menu .ti-row b small { color: var(--dim); font-size: .82em; margin-left: .5em; }
+  #tri-menu .ti-row em { font-style: normal; color: var(--dim); font-size: .82em; }
+  #tri-menu .ti-x { font: inherit; color: var(--dim); background: none; border: 1px solid transparent; border-radius: .3em; padding: .1em .45em; cursor: pointer; }
+  #tri-menu .ti-x:hover, #tri-menu .ti-x.sure { color: var(--red); border-color: var(--red); }
+  #tri-menu .ti-none { color: var(--dim); padding: .2em 0 .5em; }
+  #tri-menu form { display: grid; gap: .45em; margin-top: .7em; padding-top: .7em; border-top: 1px solid var(--line); }
+  #tri-menu label { display: grid; grid-template-columns: 6.2em 1fr; align-items: center; color: var(--dim); font-size: .86em; }
+  #tri-menu input { font: inherit; color: var(--ink); background: rgba(130, 170, 230, .07); border: 1px solid var(--line); border-radius: .3em;
+    padding: .38em .6em; min-width: 0; outline: none; }
+  #tri-menu input:focus { border-color: rgba(130, 170, 230, .6); }
+  #tri-menu .ti-foot { display: flex; gap: .6em; align-items: center; margin-top: .6em; }
+  #tri-menu .ti-msg { color: var(--dim); font-size: .84em; flex: 1; white-space: normal; line-height: 1.35; } #tri-menu .ti-msg.err { color: var(--red); }
+  #clock { font-family: var(--sans); font-weight: 200; font-size: calc(var(--u) * 5.4); line-height: .95;
+    letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  #clock small { font-size: .34em; color: var(--dim); margin-left: .25em; font-weight: 300; }
+  #date { margin-top: calc(var(--u) * .7); color: var(--ink); letter-spacing: .12em; text-transform: uppercase; font-size: .9em; }
+  #host { color: var(--dim) !important; overflow: hidden; text-overflow: ellipsis; padding-left: 1em; }
+  .metric { display: grid; grid-template-columns: 4.6em 6.6em 1fr; align-items: center; column-gap: .7em;
+    margin-top: calc(var(--u) * .42); }
+  .metric .label { font-size: .7em; }
+  .metric .v { font-family: var(--sans); font-weight: 300; font-size: 1.02em; font-variant-numeric: tabular-nums; line-height: 1;
+    white-space: nowrap; }
+  .metric .v i { font-style: normal; font-size: .72em; color: var(--dim); margin-left: .2em; }
+  .metric .sub { display: none; }
+  .metric canvas { width: 100%; min-width: 0; height: calc(var(--u) * 1.15); display: block; }
+  #minor { color: var(--dim); font-size: .74em; margin-top: calc(var(--u) * .55); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #minor b { color: var(--ink); font-weight: 400; }
+  .warn { color: var(--red) !important; }
+  /* other machines: the remote box, Trinity */
+  .sec { display: flex; justify-content: space-between; align-items: baseline; }
+  .sec span:last-child { color: var(--ink); font-size: .78em; white-space: nowrap; }
+  .sec span.off { color: var(--red); letter-spacing: .12em; } .sec span.wait { color: var(--dim); }
+  .rem { font-size: .78em; margin-top: calc(var(--u) * .35); }
+  .rem .r { display: grid; grid-template-columns: 3.6em 1fr 10.5em; column-gap: .7em; align-items: center; padding: .2em 0;
+    color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rem .r .bar { height: .3em; background: #131c2a; border-radius: 1px; overflow: hidden; }
+  .rem .r .bar b { display: block; height: 100%; background: var(--cyan); opacity: .8; }
+  .rem .r .bar b.mid { background: var(--amber); } .rem .r .bar b.hi { background: var(--red); }
+  .rem .r span:last-child { color: var(--ink); text-align: right; }
+  .rem .ln { display: grid; grid-template-columns: 1em 1fr auto; column-gap: .45em; align-items: baseline; padding: .2em 0;
+    white-space: nowrap; color: var(--ink); }
+  .rem .ln i { width: .5em; height: .5em; border-radius: 50%; border: 1px solid var(--dim); align-self: center; }
+  .rem .ln.on i { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 .7em var(--amber); }
+  .rem .ln.crit i { background: var(--red); border-color: var(--red); }
+  .rem .ln b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; opacity: .88; }
+  .rem .ln span { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .rem .note { color: var(--dim); padding: .25em 0 .1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rem .note b { color: var(--ink); font-weight: 400; } .rem .note em { font-style: normal; color: var(--amber); }
+  .rem .note em.crit { color: var(--red); }
+  .rem .act { display: grid; grid-template-columns: 1em 1fr 5em 2.4em; column-gap: .45em; align-items: center; padding: .16em 0; white-space: nowrap; }
+  .rem .act i { width: .5em; height: .5em; border-radius: 50%; border: 1px solid var(--dim); }
+  .rem .act.on i { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 .7em var(--amber); }
+  .rem .act b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; opacity: .88; }
+  .rem .act u { height: .3em; background: #131c2a; border-radius: 1px; overflow: hidden; text-decoration: none; }
+  .rem .act u s { display: block; height: 100%; background: var(--violet); opacity: .8; }
+  .rem .act span { color: var(--dim); text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* right column: two panels stacked, one per view */
+  #right { position: relative; min-height: 0; overflow: hidden; }
+  .panel { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+  #p-subs { opacity: 0; }                      /* opacity is driven by the frame loop (crossfade) */
+  #right header { display: flex; justify-content: space-between; align-items: baseline; }
+
+  #p-att { opacity: 0; }
+  /* attention view */
+  .att { display: grid; grid-template-columns: 1fr auto; column-gap: .8em; align-items: baseline;
+    padding: calc(var(--u) * .62) 0; border-bottom: 1px solid var(--line); }
+  .att .k { color: var(--dim); letter-spacing: .16em; text-transform: uppercase; font-size: .72em; }
+  .att .v { font-family: var(--sans); font-weight: 300; font-size: 1.5em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .att .v i { font-style: normal; font-size: .52em; color: var(--dim); margin-left: .2em; }
+  .att .n { grid-column: 1 / 3; color: var(--dim); font-size: .76em; margin-top: .25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .att .n b { font-weight: 400; color: var(--ink); } .att .n em { font-style: normal; }
+  .att .n em.up { color: var(--amber); } .att .n em.ok { color: var(--green); }
+  #att-share { font-size: .8em; }
+  #att-share div { display: grid; grid-template-columns: 1em 1fr 6em 2.6em 3.4em; column-gap: .5em; align-items: center; padding: .2em 0; white-space: nowrap; }
+  #att-share i { width: .55em; height: .55em; border-radius: 2px; background: var(--c); }
+  #att-share b { font-weight: 400; overflow: hidden; text-overflow: ellipsis; }
+  #att-share u { height: .32em; background: #131c2a; border-radius: 1px; overflow: hidden; text-decoration: none; }
+  #att-share u s { display: block; height: 100%; background: var(--c); opacity: .85; }
+  #att-share span { color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+  #att-share span:last-child { color: var(--dim); }
+  #att-days { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: calc(var(--u) * .28); height: calc(var(--u) * 4.2); flex: none; align-items: end; }
+  #att-days div { display: flex; flex-direction: column-reverse; height: 100%; }
+  #att-days div i { display: block; background: #26364e; min-height: 0; }
+  #att-days div i.deep { background: var(--violet); opacity: .9; }
+
+  /* sessions view: subscriptions, tokens per day, recent sessions */
+  .sub { padding: calc(var(--u) * .62) 0; border-bottom: 1px solid var(--line); }
+  .sub .sn { display: grid; grid-template-columns: 1.1em 1fr auto; column-gap: .5em; align-items: baseline; }
+  .sub .sn i { width: .58em; height: .58em; border-radius: 50%; background: var(--c); box-shadow: 0 0 .7em var(--c); align-self: center; }
+  .sub .sn span { font-family: var(--sans); font-size: 1.06em; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub .sn em { font-style: normal; color: var(--amber); font-size: .78em; white-space: nowrap; }
+  .sub .lim { display: grid; grid-template-columns: 1.6em 1fr 6.6em 1.6em 1fr 5.6em; column-gap: .5em; align-items: center;
+    margin: .42em 0 .1em 1.6em; font-size: .76em; color: var(--dim); white-space: nowrap; }
+  .sub .lim .bar { height: .34em; background: #131c2a; border-radius: 1px; overflow: hidden; }
+  .sub .lim .bar b { display: block; height: 100%; background: var(--green); transition: width 1.5s; }
+  .sub .lim .bar b.mid { background: var(--amber); } .sub .lim .bar b.hi { background: var(--red); }
+  .sub .lim span.v { color: var(--ink); }
+  .sub .nums { display: grid; grid-template-columns: 4.4em 1fr 1fr 1fr; margin: .28em 0 0 1.6em; font-size: .78em;
+    color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .sub .nums b { color: var(--ink); font-weight: 400; }
+  .sub-h { display: flex; justify-content: space-between; margin: calc(var(--u) * 1.05) 0 calc(var(--u) * .5); }
+  .sub-h span:last-child { color: var(--dim); letter-spacing: .04em; text-transform: none; }
+  #days { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: calc(var(--u) * .28); height: calc(var(--u) * 4.6); flex: none; }
+  #days div { display: flex; flex-direction: column-reverse; background: linear-gradient(0deg, #0d1420 1px, transparent 1px); }
+  #days div i { display: block; background: var(--c); opacity: .88; min-height: 0; }
+  #days div i:last-child { border-radius: 1px 1px 0 0; }
+  #recent { font-size: .8em; }
+  #recent div { display: grid; grid-template-columns: 6.3em 1.1em 8.2em 1fr; padding: .2em 0; color: var(--dim); white-space: nowrap; }
+  #recent div i { width: .5em; height: .5em; border-radius: 50%; background: var(--c); align-self: center; }
+  #recent div.live i { background: var(--amber); box-shadow: 0 0 .8em var(--amber); }
+  #recent div b { font-weight: 400; color: var(--ink); overflow: hidden; text-overflow: ellipsis; padding-right: .6em; }
+  #recent div span:last-child { overflow: hidden; text-overflow: ellipsis; color: var(--ink); opacity: .72; }
+  #right header b { font-family: var(--sans); font-weight: 300; font-size: 1.5em; color: var(--ink); }
+  .agent { display: grid; grid-template-columns: 1.1em 1fr auto; column-gap: .5em; padding: calc(var(--u) * .78) 0;
+    border-bottom: 1px solid var(--line); }
+  .agent .dot { width: .58em; height: .58em; border-radius: 50%; margin-top: .42em; border: 1px solid var(--dim); }
+  .agent.busy .dot { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 .9em var(--amber);
+    opacity: var(--beat, 1); }
+  .agent .p { font-family: var(--sans); font-size: 1.12em; font-weight: 500; letter-spacing: .01em; }
+  .agent.busy .p { color: var(--amber); }
+  .agent .t { color: var(--dim); font-size: .8em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .agent.busy .t { color: var(--amber); }
+  .agent .title { grid-column: 2 / 4; color: var(--ink); opacity: .82; font-size: .82em; margin-top: .25em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .agent .status { grid-column: 2 / 4; color: var(--dim); font-size: .78em; margin-top: .2em; line-height: 1.35;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #more { color: var(--dim); font-size: .8em; padding-top: .7em; }
+  /* a session of another runtime (Codex, OpenCode, Gemini CLI) carries its name */
+  .agent .p small { font-family: var(--mono, inherit); font-size: .6em; font-weight: 400; letter-spacing: .14em; text-transform: uppercase; color: var(--dim);
+    border: 1px solid var(--line); border-radius: .3em; padding: .08em .45em; margin-left: .7em; vertical-align: .18em; }
+  #rts { font-size: .8em; }
+  #rts div { display: grid; grid-template-columns: 1.1em 7.4em 1fr auto; column-gap: .5em; padding: .22em 0; color: var(--dim); white-space: nowrap; align-items: baseline; }
+  #rts div i { width: .5em; height: .5em; border-radius: 50%; border: 1px solid var(--dim); align-self: center; }
+  #rts div.on i { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 .8em var(--amber); }
+  #rts div b { font-weight: 400; color: var(--ink); } #rts div span b { font-variant-numeric: tabular-nums; }
+  #rts p { margin: .35em 0 0; color: var(--dim); line-height: 1.4; white-space: normal; }
+  #rts-h[hidden], #rts[hidden] { display: none; }
+  #recent div.rt:not(.live) i { background: none; border: 1px solid var(--dim); }
+  body.no-claude #subs, body.no-claude #days, body.no-claude #days-h { display: none; }
+  body.no-fleet #bottom { grid-template-columns: 40fr 30fr 30fr; } body.no-fleet #bottom > div:nth-child(3) { display: none; }
+  /* the first-run card: what the survey found on this machine */
+  #welcome { position: fixed; inset: 0; z-index: 45; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .5); cursor: auto; }
+  #welcome[hidden] { display: none; }
+  #welcome .wc { width: min(64em, 88vw); max-height: 86vh; overflow: auto; font-size: calc(var(--u) * .86); color: var(--ink); background: var(--bg);
+    border: 1px solid rgba(130, 170, 230, .4); border-radius: calc(var(--u) * .4); padding: 1.3em 1.6em 1.2em; box-shadow: 0 .6em 2.4em rgba(0, 0, 0, .55); }
+  #welcome h6 { font: inherit; font-size: .78em; color: var(--dim); letter-spacing: .2em; text-transform: uppercase; margin: 0 0 .5em; }
+  #welcome h3 { font-family: var(--sans); font-weight: 300; font-size: 1.7em; margin: 0 0 .7em; }
+  #wc-l div { display: grid; grid-template-columns: 1.3em 6.2em 1fr; column-gap: .5em; padding: .3em 0; border-bottom: 1px solid var(--line); line-height: 1.4; }
+  #wc-l div i { font-style: normal; color: var(--dim); } #wc-l div.ok i { color: var(--green); } #wc-l div.MISS i, #wc-l div.MISS span { color: var(--red); }
+  #wc-l div b { font-weight: 400; color: var(--dim); } #wc-l div.none span, #wc-l div.note span { opacity: .78; }
+  #wc-l code { font: inherit; color: var(--cyan); }
+  #welcome .ti-foot { display: flex; gap: 1em; align-items: center; margin-top: 1em; } #welcome .ti-msg { flex: 1; color: var(--dim); font-size: .9em; line-height: 1.4; }
+
+  /* bottom strip */
+  #bottom { grid-column: 1 / 4; grid-row: 2; display: grid; grid-template-columns: 34fr 26fr 20fr 20fr; gap: calc(var(--u) * .9);
+    align-items: stretch; }
+  #bottom > div { border: 1px solid var(--line); border-radius: calc(var(--u) * .3); background: rgba(130, 170, 230, .028);
+    padding: calc(var(--u) * .8) calc(var(--u) * 1); min-width: 0; overflow: hidden; }
+  #bottom h4 { font-weight: 400; margin-bottom: calc(var(--u) * .75); display: flex; justify-content: space-between; }
+  #bottom h4 span:last-child { color: var(--ink); letter-spacing: .04em; text-transform: none; font-size: 1.15em; }
+  #heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: calc(var(--u) * .2); height: calc(var(--u) * 7.4); }
+  #heat i { border-radius: 1.5px; background: #0d1420; }
+  #heat i.today { outline: 1px solid var(--ink); outline-offset: 1px; }
+  #hours { display: grid; grid-template-columns: repeat(24, 1fr); gap: calc(var(--u) * .22); height: calc(var(--u) * 6.2); align-items: end; }
+  #hours div { position: relative; height: 100%; }
+  #hours div u, #hours div b { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 1px 1px 0 0; }
+  #hours div u { background: #16202f; }
+  #hours div b { background: var(--cyan); opacity: .9; left: 22%; right: 22%; }
+  #hours div.now u { background: #26364e; }
+  #hticks { display: flex; justify-content: space-between; color: var(--dim); font-size: .7em; margin-top: .35em; }
+  #fleet { display: grid; grid-template-columns: 1fr 1fr; gap: .28em .9em; font-size: .78em; }
+  #fleet div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); opacity: .85; }
+  #fleet div::before { content: ""; display: inline-block; width: .5em; height: .5em; border-radius: 50%;
+    background: var(--green); margin-right: .55em; box-shadow: 0 0 .5em var(--green); }
+  #fleet div.off { color: var(--dim); }
+  #fleet div.off::before { background: none; border: 1px solid var(--red); box-shadow: none; }
+  #feed { font-size: .8em; }
+  #feed div { display: grid; grid-template-columns: 3.4em 1.2em 1fr; padding: .17em 0; color: var(--dim); white-space: nowrap; overflow: hidden; }
+  #feed div b { font-weight: 400; color: var(--ink); overflow: hidden; text-overflow: ellipsis; }
+  #feed .prompt em { color: var(--amber); font-style: normal; }
+  #feed .answer em { color: var(--green); font-style: normal; }
+  .totals { color: var(--dim); font-size: .76em; margin-top: calc(var(--u) * .8); letter-spacing: .04em; }
+  .totals b { color: var(--ink); font-weight: 400; }
+  #stage, #bg { transition: opacity .6s; }
+  .asleep #stage, .asleep #bg { opacity: .28; }
+  #paused { position: fixed; left: 0; right: 0; top: 46%; text-align: center; letter-spacing: .5em; color: var(--dim);
+    font-size: 1.1em; display: none; }
+  .asleep #paused { display: block; }
+  #offline { position: fixed; left: 50%; bottom: 46%; transform: translateX(-50%); color: var(--red);
+    letter-spacing: .3em; font-size: .9em; display: none; }
+</style>
+<style id="skin-day" media="not all">
+  /* ---------- DAY SKIN ----------
+     The light look: warm sand, not white; dark ink; the accents deepened so they read on a light
+     ground. Switched on like the dusk skin. What the canvas draws with is in the script's SKINS table. */
+  :root {
+    --bg: #ddd7ca; --ink: #23272f; --dim: #666b74; --faint: #b7b0a2;
+    --line: rgba(45, 52, 70, .2);
+    --cyan: #0e819e; --amber: #b56500; --green: #1c8754; --red: #c92f4d; --violet: #6a4bd0;
+  }
+  html { background: linear-gradient(180deg, #e3ddd1 0%, #dcd6c9 60%, #d3ccbd 100%); }
+  body { background: none; }
+  .box, #bottom > div, #tv .tile { background: rgba(255, 255, 255, .34); }
+  #tv-stage { background: rgba(255, 255, 255, .46); border-color: rgba(45, 52, 70, .3); }
+  #tv-stage.r0 { border-color: rgba(201, 47, 77, .7); } #tv-stage.r1 { border-color: rgba(201, 47, 77, .5); } #tv-stage.r2 { border-color: rgba(181, 101, 0, .55); }
+  #tv-decide { background: rgba(255, 250, 238, .5); border-color: rgba(181, 101, 0, .5); }
+  #tv-stage .opt, #dq .dq-o { background: rgba(255, 255, 255, .5); }
+  #dq .dq-o:hover { background: rgba(255, 255, 255, .8); border-color: rgba(45, 52, 70, .5); }
+  #dq .dq-o.on { background: rgba(28, 135, 84, .12); }
+  #dq .dq-else input { background: rgba(255, 255, 255, .6); }
+  #dq .dq-else button, #talk-bar button { background: rgba(45, 52, 70, .08); }
+  #dq button, #talk-go { color: #fff !important; }
+  #dq button.quiet, #dq .dq-else button { color: var(--dim) !important; }
+  #tabs button.on { background: rgba(45, 52, 70, .09); }
+  #tv .tile[data-list]:hover, #tv .tile.on { border-color: rgba(45, 52, 70, .55); }
+  .rem .r .bar, .rem .act u, #att-share u, .sub .lim .bar, #tv .tl .track { background: rgba(45, 52, 70, .13); }
+  #tv .dots i, #tv .bars u, #att-days div i, #hours div u { background: rgba(45, 52, 70, .22); }
+  #hours div.now u { background: rgba(45, 52, 70, .36); }
+  #heat i { background: rgba(45, 52, 70, .1); }
+  #days div { background: linear-gradient(0deg, rgba(45, 52, 70, .15) 1px, transparent 1px); }
+  #tv .ask, #tv .prj, #tv-stage .trow { border-bottom-color: rgba(45, 52, 70, .1); }
+  #stage *, #tabs * { text-shadow: none; }
+  .agent.busy .dot, .rem .ln.on i, .rem .act.on i, #recent div.live i, #fleet div::before, #tv .lights i, #tv .dots i.r, #tv .ask.critical i { box-shadow: none; }
+  .asleep #stage, .asleep #bg { opacity: .45; }
+  #talk-frame, #orb-frame { background: rgba(45, 52, 70, .16); }   /* empty until a conversation loads; the voice page itself stays dark */
+</style>
+<style id="skin-dusk" media="not all">
+  /* ---------- DUSK SKIN ----------
+     The second look of this page: sunset-at-dusk palette, condensed italic
+     HUD lettering, rounded panels. Switched on by the `media` attribute when the dusk skin is chosen
+     (?skin=dusk, the SKIN button, key K). What the canvas draws with is in the script's SKIN table. */
+  :root {
+    --bg: #0b0714; --ink: #f3eef8; --dim: #9388a8; --faint: #3a2c52;
+    --line: rgba(255, 255, 255, .12);
+    --cyan: #45d6c8; --amber: #ffb347; --green: #8ff0b4; --red: #ff5470; --violet: #c08bff;
+    --pink: #ff4f86; --orange: #ff7a45;
+    --mono: "Avenir Next", -apple-system, "Helvetica Neue", sans-serif;
+    --sans: "Avenir Next Condensed", "Arial Narrow", -apple-system, sans-serif;
+  }
+  html { background: linear-gradient(180deg, #08060f 0%, #0d0818 55%, #170b22 100%); }
+  body { background: none; }
+  /* the sun has just gone: a low glow behind the bottom strip (above the canvas, so view fades do not touch it) */
+  #stage::before { content: ""; position: absolute; left: -30px; right: -30px; bottom: -30px; height: 48%; z-index: -1; pointer-events: none;
+    background: radial-gradient(120% 100% at 50% 104%, rgba(255, 122, 69, .30) 0%, rgba(255, 79, 134, .17) 34%, transparent 70%); }
+  .label { font-family: var(--sans); font-weight: 700; font-style: italic; letter-spacing: .18em; font-size: .86em; }
+  .metric .label { font-size: .8em; }
+  #bottom h4 { font-weight: 700; } #bottom h4 span:last-child, .sub-h span:last-child { font-family: var(--mono); font-style: normal; font-weight: 400; }
+  .rule { background: linear-gradient(90deg, var(--pink), var(--orange) 28%, transparent 85%); opacity: .55; }
+  .box, #bottom > div { border-radius: calc(var(--u) * .9); background: rgba(255, 255, 255, .045); }
+  #bottom > div:first-child { border-radius: calc(var(--u) * 1.5); border-color: rgba(255, 255, 255, .3); background: rgba(16, 10, 28, .7); }
+  #clock { font-weight: 700; font-style: italic; letter-spacing: 0; } #clock small { font-weight: 500; }
+  .metric .v, .att .v { font-weight: 600; font-size: 1.14em; } .att .v { font-size: 1.7em; }
+  .agent .p, .sub .sn span { font-weight: 600; font-size: 1.24em; letter-spacing: .02em; }
+  #right header b { font-weight: 700; font-style: italic; font-size: 1.95em; line-height: 1; color: var(--green); }
+  .rem .r .bar, .rem .act u, #att-share u, .sub .lim .bar { background: rgba(255, 255, 255, .09); border-radius: 1em; }
+  .rem .r .bar b, .rem .act u s, #att-share u s, .sub .lim .bar b { border-radius: 1em; }
+  #heat i { background: #171022; border-radius: 2.5px; }
+  #hours div u { background: #1f1730; } #hours div.now u { background: #3a2c52; }
+  #hours div b { background: linear-gradient(0deg, var(--pink), var(--orange)); opacity: 1; }
+  #days div { background: linear-gradient(0deg, #1f1730 1px, transparent 1px); }
+  #att-days div i { background: #3a2c52; }
+  #tabs button { font-family: var(--sans); font-weight: 700; font-style: italic; font-size: .82em; border-radius: 999px; }
+  #tabs button.on { background: rgba(255, 79, 134, .13); border-color: rgba(255, 79, 134, .5); }
+  #talk-bar button { border-radius: 999px; background: rgba(255, 255, 255, .07); }
+  #talk-bar button:hover { background: rgba(255, 255, 255, .16); }
+  #talk-frame, #orb-frame { border-radius: calc(var(--u) * .9); }
+  /* the Trinity desk in the same look */
+  #tv .tile, #tv-stage, #tv-decide { border-radius: calc(var(--u) * 1.1); }
+  #tv .tile { background: rgba(255, 255, 255, .045); }
+  #tv .tile .n { font-weight: 700; font-style: italic; } #tv .tile .n small { font-family: var(--sans); font-weight: 700; font-style: italic; font-size: .26em; }
+  #tv .tile.on, #tv .tile[data-list]:hover { border-color: rgba(255, 79, 134, .6); }
+  #tv .dots i { background: #3a2c52; } #tv .dots i.h { background: none; border-color: var(--orange); } #tv .dots i.a { background: var(--orange); }
+  #tv .bars u { background: #3a2c52; border-radius: 2px 2px 0 0; } #tv .bars u:last-child { background: linear-gradient(0deg, var(--pink), var(--orange)); }
+  #tv-logo { color: var(--pink); }
+  #tv-stage { background: rgba(16, 10, 28, .72); border-color: rgba(255, 255, 255, .28); }
+  #tv-stage.r0, #tv-stage.r1 { border-color: rgba(255, 84, 112, .7); } #tv-stage.r2 { border-color: rgba(255, 122, 69, .6); }
+  @keyframes tvnew { from { box-shadow: 0 0 0 2px var(--pink), 0 0 3.5em rgba(255, 79, 134, .55); } to { box-shadow: none; } }
+  #tv-stage .kick, #dq .dq-k, #tv h5 { font-family: var(--sans); font-weight: 700; font-style: italic; letter-spacing: .16em; font-size: .84em; }
+  #tv-stage .kick b { color: var(--orange); } #tv-stage.r0 .kick b, #tv-stage.r1 .kick b { color: var(--pink); }
+  #tv-stage h2 { font-weight: 700; font-style: italic; letter-spacing: .005em; font-size: calc(var(--u) * 2.3); line-height: 1.08; }
+  #tv-stage .take { border-left: 3px solid; border-image: linear-gradient(180deg, var(--pink), var(--orange)) 1; font-family: var(--mono); }
+  #tv-stage .take small { font-family: var(--sans); font-weight: 700; font-style: italic; font-size: .7em; color: var(--pink); }
+  #tv-stage .body, #tv-stage .facts, #tv-stage .foot, #tv-stage .trow span { font-family: var(--mono); }
+  #tv-stage .opt { border-radius: calc(var(--u) * .7); background: rgba(255, 255, 255, .05); } #tv-stage .opt.rec { border-color: var(--orange); }
+  #tv-stage .opt.rec b::after, #dq .dq-o.rec b::after { font-family: var(--sans); font-weight: 700; font-style: italic; font-size: .66em; color: var(--orange); }
+  #tv-decide { border-color: rgba(255, 122, 69, .5); background: linear-gradient(180deg, rgba(255, 79, 134, .07), rgba(255, 122, 69, .04)); }
+  #tv-decide .label { color: var(--orange); }
+  #dq h3 { font-weight: 700; font-style: italic; font-size: calc(var(--u) * 1.4); line-height: 1.15; }
+  #dq .dq-k b { color: var(--orange); } #dq .dq-k b.critical { color: var(--pink); }
+  #dq .dq-o { border-radius: calc(var(--u) * .7); background: rgba(255, 255, 255, .05); } #dq .dq-o span { font-family: var(--mono); }
+  #dq .dq-o:hover { border-color: rgba(255, 79, 134, .6); background: rgba(255, 79, 134, .08); }
+  #dq .dq-o.on { border-color: var(--green); background: rgba(143, 240, 180, .08); }
+  #dq button { border-radius: 999px; font-family: var(--sans); font-weight: 700; font-style: italic; font-size: .8em; }
+  #dq .dq-else input { border-radius: 999px; font-family: var(--mono); padding-left: 1em; }
+  #dq .dq-msg, #dq .dq-nav { font-family: var(--mono); }
+  #tv .tl .who b { font-weight: 700; font-style: italic; } #tv .tl.live .who b { color: var(--orange); }
+  #tv .tl .track { background: rgba(255, 255, 255, .06); border-radius: 1em; }
+  #tv .tl .track i { background: linear-gradient(90deg, var(--pink), var(--orange)); opacity: .95; border-radius: 1em; }
+  #tv .tl .track i.bad { background: var(--red); } #tv .tl .track i.live { background: var(--green); box-shadow: 0 0 .8em var(--green); }
+  #tv-feed div.f-ask b { color: var(--orange); } #tv-feed div.f-bad b { color: var(--pink); }
+  #tv .ask.high i { background: var(--orange); border-color: var(--orange); } #tv .ask.critical b { color: var(--pink); }
+  body.v-tv #talk-bar .label { color: var(--pink); }
+</style>
+<script>
+// the chosen look, before anything is drawn: ?skin=dusk|night, else the one chosen last
+try { var __skin = new URLSearchParams(location.search).get("skin") || localStorage.getItem("fd-skin") || "night";
+  var __el = document.getElementById("skin-" + __skin); if (__el) __el.media = "all"; } catch (e) { var __skin = "night"; }
+</script>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<div id="stage">
+  <section id="left">
+    <div id="clock">--:--</div>
+    <div id="date"></div>
+    <div class="box">
+      <div class="sec"><span class="label">Mac</span><span id="host"></span></div>
+      <div class="metric"><div class="label">CPU</div><div class="v" id="cpu-v">–</div><canvas id="cpu-s"></canvas><div class="sub" id="cpu-sub"></div></div>
+      <div class="metric"><div class="label">Memory</div><div class="v" id="mem-v">–</div><canvas id="mem-s"></canvas><div class="sub" id="mem-sub"></div></div>
+      <div class="metric"><div class="label">Network</div><div class="v" id="net-v">–</div><canvas id="net-s"></canvas><div class="sub" id="net-sub"></div></div>
+      <div id="minor"></div>
+    </div>
+    <div class="box" id="rem-box">
+      <div class="sec"><span class="label" id="rem-l">Remote</span><span id="remote-h" class="wait">…</span></div>
+      <div class="rem" id="remote"></div>
+    </div>
+    <div class="box" id="tri-box">
+      <div class="sec"><span class="label" id="tri-l">Trinity</span><span id="tri-h" class="wait">…</span></div>
+      <div class="rem" id="tri"></div>
+    </div>
+  </section>
+  <section id="mid"></section>
+  <section id="right">
+    <div class="panel" id="p-agents">
+      <header><span class="label">Agents</span><b id="agent-count"></b></header>
+      <div class="rule"></div>
+      <div id="agents"></div>
+      <div id="more"></div>
+    </div>
+    <div class="panel" id="p-att">
+      <header><span class="label">Attention</span><b id="att-n"></b></header>
+      <div class="rule"></div>
+      <div id="att-cards"></div>
+      <h4 class="label sub-h"><span>Where the prompts went</span><span>today · 7 d</span></h4>
+      <div id="att-share"></div>
+      <h4 class="label sub-h"><span>At the keys · 14 d</span><span id="att-days-n"></span></h4>
+      <div id="att-days"></div>
+    </div>
+    <div class="panel" id="p-subs">
+      <header><span class="label" id="subs-l">Subscriptions</span><b id="subs-n"></b></header>
+      <div class="rule"></div>
+      <div id="subs"></div>
+      <h4 class="label sub-h" id="rts-h" hidden><span>Other runtimes</span><span>7 days</span></h4>
+      <div id="rts" hidden></div>
+      <h4 class="label sub-h" id="days-h"><span>Tokens · <span id="days-n"></span> days</span><span id="days-max"></span></h4>
+      <div id="days"></div>
+      <h4 class="label sub-h"><span>Recent sessions</span><span id="recent-n"></span></h4>
+      <div id="recent"></div>
+    </div>
+  </section>
+  <section id="tv">
+    <div id="tv-edge">
+      <div id="tv-logo" title="Trinity"><svg class="tlogo" viewBox="0 0 1024 1024" aria-hidden="true"><g transform="translate(0.000000,1024.000000) scale(0.100000,-0.100000)" fill="currentColor" stroke="none"> <path d="M5043 8108 c-218 -17 -433 -98 -618 -233 -68 -50 -105 -81 -105 -88 0 -2 37 -8 83 -11 380 -32 781 -219 1017 -473 124 -134 234 -321 289 -492 72 -221 89 -533 45 -810 l-6 -36 129 -18 c161 -22 342 -64 503 -116 69 -23 127 -41 130 -41 4 0 11 33 18 73 74 456 39 908 -98 1274 -245 651 -771 1019 -1387 971z"/> <path d="M4109 7564 c-110 -155 -171 -277 -232 -469 -75 -235 -102 -418 -101 -695 0 -356 48 -646 170 -1023 106 -327 336 -774 569 -1107 84 -120 99 -140 104 -139 3 0 47 52 96 115 113 146 261 370 322 489 l46 91 -93 163 c-166 291 -288 583 -360 866 -116 455 -94 869 63 1180 64 127 180 270 288 352 27 20 49 40 49 44 0 14 -198 108 -292 138 -141 45 -253 63 -423 68 l-150 5 -56 -78z"/> <path d="M4955 5828 c-82 -5 -151 -10 -152 -12 -6 -6 68 -227 106 -317 59 -140 135 -300 180 -377 l40 -69 168 -7 c717 -31 1291 -239 1682 -610 225 -214 355 -483 387 -799 l6 -58 66 36 c237 130 454 332 564 525 l26 45 -29 85 c-85 253 -261 517 -494 739 -511 487 -1232 775 -2060 821 -195 11 -281 11 -490 -2z"/> <path d="M3629 5507 c-411 -186 -765 -449 -1002 -746 -226 -283 -348 -581 -363 -886 -31 -598 342 -1102 936 -1265 41 -11 85 -20 97 -20 21 0 20 4 -22 59 -220 289 -333 675 -296 1014 31 288 155 533 378 747 145 140 264 222 471 326 94 48 172 88 172 90 0 1 -18 42 -41 91 -82 177 -152 365 -209 561 -11 39 -22 72 -23 72 -1 0 -45 -20 -98 -43z"/> <path d="M5208 4737 c-166 -329 -359 -598 -602 -843 -297 -298 -562 -459 -871 -529 -195 -44 -347 -42 -539 6 -43 11 -79 19 -81 17 -1 -2 6 -43 16 -93 49 -237 164 -471 325 -659 l59 -69 94 2 c414 10 892 207 1313 543 217 172 514 498 703 772 152 219 459 781 467 856 3 20 -4 25 -57 41 -164 50 -536 109 -685 109 l-65 0 -77 -153z"/> <path d="M8006 3911 c-123 -150 -298 -296 -474 -395 -126 -71 -228 -112 -366 -144 -98 -23 -132 -26 -291 -26 -159 0 -193 3 -291 26 -244 57 -470 177 -700 371 l-100 85 -105 -141 c-113 -153 -220 -279 -337 -399 -42 -43 -74 -79 -71 -82 51 -48 227 -180 336 -253 244 -162 517 -281 773 -337 542 -119 1016 4 1351 351 166 172 260 344 320 587 23 91 37 365 22 404 -9 23 -12 21 -67 -47z"/> </g></svg></div><div id="tv-who"><b id="tv-name"></b><button id="tv-chip" title="connect, switch or remove Trinity instances"></button></div>
+      <div class="tile" data-list="asks" title="click: the whole list on the stage"><div class="n" id="tv-n-asks">–<small>need you</small></div><div class="x"><div class="s" id="tv-s-asks"></div><div class="dots" id="tv-d-asks"></div></div></div>
+      <div class="tile" data-list="projects" title="click: the whole list on the stage"><div class="n" id="tv-n-prj">–<small>projects</small></div><div class="x"><div class="s" id="tv-s-prj"></div><div class="dots" id="tv-d-prj"></div></div></div>
+      <div class="tile"><div class="n" id="tv-n-runs">–<small>runs · 24 h</small></div><div class="x"><div class="s" id="tv-s-runs"></div><div class="bars" id="tv-bars"></div></div></div>
+      <div class="tile"><div class="lights" id="tv-lights"></div></div>
+    </div>
+    <div id="tv-inst"></div>
+    <div id="tv-main">
+      <div id="tv-voice"></div>
+      <div id="tv-stage"></div>
+      <div id="tv-decide">
+        <div class="label"><span>Decide</span><span id="dq-n"></span></div>
+        <div class="rule"></div>
+        <div id="dq"></div>
+      </div>
+    </div>
+    <div id="tv-bot">
+      <div id="tv-lanes"></div>
+      <div id="tv-rail">
+        <div class="label" style="display:flex;justify-content:space-between"><span>What changed</span><span id="tv-loop" style="letter-spacing:.04em;text-transform:none"></span></div>
+        <div id="tv-feed"></div>
+      </div>
+    </div>
+  </section>
+  <section id="talk">
+    <div id="talk-bar">
+      <span class="label" id="talk-who">Talk</span>
+      <button id="talk-go">Start conversation<kbd>V</kbd></button>
+      <span id="talk-msg">talk to the agent</span>
+      <span id="talk-warm" hidden>face loading<b><i></i></b></span>
+      <button id="talk-take" hidden>Take over</button>
+      <button id="talk-stop" hidden>Close</button>
+    </div>
+    <div id="talk-body">
+      <iframe id="talk-frame" title="Voice agent" allow="microphone; autoplay; clipboard-write"></iframe>
+      <iframe id="orb-frame" title="The second agent's orb" tabindex="-1"></iframe>
+    </div>
+  </section>
+  <section id="bottom">
+    <div>
+      <h4 class="label"><span>Prompts per day · 27 wk</span><span id="today"></span></h4>
+      <div id="heat"></div>
+      <div id="totals" class="totals"></div>
+    </div>
+    <div>
+      <h4 class="label"><span>Prompts by hour</span><span id="peak"></span></h4>
+      <div id="hours"></div>
+      <div id="hticks"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div>
+    </div>
+    <div>
+      <h4 class="label"><span>Fleet</span><span id="fleet-n"></span></h4>
+      <div id="fleet"></div>
+      <div class="totals backup"></div>
+    </div>
+    <div>
+      <h4 class="label"><span>Signal</span><span></span></h4>
+      <div id="feed"></div>
+    </div>
+  </section>
+</div>
+<nav id="tabs">
+  <button data-v="deck" title="D">DECK</button><button data-v="sessions" title="S">SESSIONS</button>
+  <button data-v="attention" title="T">ATTENTION</button><button data-v="trinity" title="M or 6 · asks, projects and operations on Trinity">TRINITY</button><button data-v="talk" title="4 · V starts or stops the conversation">TALK</button>
+  <button data-v="second" title="5 or C"></button>
+  <i id="tabs-pin"></i>
+  <button id="skin-btn" title="K · switch the look of the page (it reloads)"></button>
+</nav>
+<div id="welcome" hidden><div class="wc"><h6>First look</h6><h3 id="wc-t"></h3><div id="wc-l"></div>
+  <div class="ti-foot"><span class="ti-msg" id="wc-m"></span><button class="ti-btn go" id="wc-ok">Got it</button></div></div></div>
+<div id="offline">FEEDER OFFLINE</div>
+<div id="paused">PAUSED</div>
+
+<script>
+"use strict";
+const DEBUG = new URLSearchParams(location.search).has("debug");
+window.__err = ""; window.__frames = 0;
+addEventListener("error", e => { window.__err = e.message + " @" + e.lineno; });
+const $ = id => document.getElementById(id);
+// ---------- skins. "night" is the original look, "dusk" the sunset one. The CSS half is the skin-dusk
+// style block; this table is what the canvas draws with. Switching reloads the page (key K, the SKIN button).
+const SKINS = ["night", "day", "dusk"];
+const SKIN_NAME = SKINS.includes(window.__skin) ? window.__skin : "night", DUSK = SKIN_NAME === "dusk";
+try { if (new URLSearchParams(location.search).get("skin")) localStorage.setItem("fd-skin", SKIN_NAME); } catch (e) {}
+const SKIN = SKIN_NAME === "day" ? {
+  acc: ["#0e819e", "#6a4bd0", "#1c8754", "#c03d86", "#3a5fd0", "#8f7a00", "#c4522a"], none: "#7d8189",
+  heat: ["#cdc6b8", "#a9cbd0", "#74b3c1", "#3d95ab", "#0e7893", "#0a4c61"], halo: "14,129,158",
+  grid: "rgba(45,52,70,.18)", grid2: "rgba(45,52,70,.12)", ribbon: "#c8c1b3",
+  sans: '-apple-system, "Helvetica Neue", sans-serif', sans2: '-apple-system, "SF Pro Display", sans-serif',
+  mono: px => px + "px ui-monospace, Menlo, monospace",
+} : DUSK ? {
+  acc: ["#45d6c8", "#c08bff", "#8ff0b4", "#ff6fa8", "#7aa2ff", "#f2c14e", "#ff8f6b"], none: "#9388a8",
+  heat: ["#171022", "#3b1d4d", "#7b2a6c", "#c8407a", "#ff7a59", "#ffd08a"], halo: "255,79,134",
+  grid: "rgba(255,255,255,.12)", grid2: "rgba(255,255,255,.09)", ribbon: "#2a1f3d",
+  sans: '"Avenir Next Condensed", -apple-system, sans-serif', sans2: '"Avenir Next Condensed", -apple-system, sans-serif',
+  mono: px => "600 " + px + 'px "Avenir Next Condensed", "Arial Narrow", sans-serif',
+} : {
+  acc: ["#58e1ff", "#a78bfa", "#5df2a1", "#ff8ad0", "#7aa2ff", "#e8e08a", "#ff9f7a"], none: "#6b7a93",
+  heat: ["#0d1420", "#12384a", "#17607a", "#2a9bbd", "#58e1ff", "#c9f6ff"], halo: "88,225,255",
+  grid: "rgba(130,170,230,.14)", grid2: "rgba(130,170,230,.10)", ribbon: "#131c2a",
+  sans: '-apple-system, "Helvetica Neue", sans-serif', sans2: '-apple-system, "SF Pro Display", sans-serif',
+  mono: px => px + "px ui-monospace, Menlo, monospace",
+};
+function setSkin(name) {                                   // a reload: every colour here is read once, at start
+  if (typeof talk !== "undefined" && talk.talking) { $("tabs-pin").textContent = "END THE CONVERSATION FIRST"; return; }
+  try { localStorage.setItem("fd-skin", name); } catch (e) {}
+  const q = new URLSearchParams(location.search); q.delete("skin");
+  location.replace(location.pathname + (q.toString() ? "?" + q : ""));
+}
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const C = { cyan: css("--cyan"), amber: css("--amber"), green: css("--green"), red: css("--red"),
+            violet: css("--violet"), ink: css("--ink"), dim: css("--dim") };
+const TAU = Math.PI * 2;
+const lerp = (a, b, t) => a + (b - a) * t;
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls;
+  if (text != null) e.textContent = text; return e; };
+
+// ---------- formatting
+const gb = b => (b / 2 ** 30).toFixed(b / 2 ** 30 >= 100 ? 0 : 1);
+function rate(b) { return b >= 1e6 ? (b / 1e6).toFixed(1) + " MB/s" : b >= 1e3 ? (b / 1e3).toFixed(0) + " KB/s" : Math.round(b) + " B/s"; }
+function big(n) { return n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(n >= 1e8 ? 0 : 2) + "M" : n >= 1e4 ? (n / 1e3).toFixed(0) + "k" : n.toLocaleString("en-US"); }
+function ago(sec) {
+  if (sec < 60) return Math.max(0, Math.round(sec)) + "s";
+  if (sec < 3600) return Math.floor(sec / 60) + "m";
+  if (sec < 86400) return Math.floor(sec / 3600) + "h " + Math.floor(sec % 3600 / 60) + "m";
+  return Math.floor(sec / 86400) + "d " + Math.floor(sec % 86400 / 3600) + "h";
+}
+const hhmm = ts => new Date(ts * 1000).toTimeString().slice(0, 5);
+
+// ---------- sleep
+// In a browser window the page runs whenever the window can be seen, focused or not (it is meant
+// to sit on a second monitor). It sleeps only when hidden: minimised, fully covered, or on another
+// Space; then it stops drawing and stops asking the feeder for data. As the screensaver
+// (window.__native) it always runs.
+const ALWAYS = !!window.__native || new URLSearchParams(location.search).has("awake");
+const isAwake = () => ALWAYS || document.visibilityState === "visible";
+let awake = isAwake();
+document.body.classList.toggle("asleep", !awake);
+const wakeHooks = [];
+// Frame scheduling. Inside the screensaver host the web view counts as "not visible", so
+// requestAnimationFrame never fires there (panels updated, the canvas stayed empty). The saver
+// therefore drives frames itself by calling window.__tick() on a timer; browsers use rAF.
+function schedule() { if (!window.__native) requestAnimationFrame(frame); }
+window.__tick = () => { if (awake) frame(performance.now()); };
+function checkAwake() {
+  const now = isAwake(); if (now === awake) return;
+  awake = now; document.body.classList.toggle("asleep", !awake);
+  if (awake) { lastPush = performance.now(); last = performance.now(); wakeHooks.forEach(f => f()); tickClock(); schedule(); }
+}
+for (const ev of ["focus", "blur", "pageshow", "pagehide"]) addEventListener(ev, checkAwake);
+document.addEventListener("visibilitychange", checkAwake);
+
+// ---------- views
+// "deck" = the core with agents in orbit; "sessions" = subscriptions + the topic graph.
+// The page cycles through them; D / S / T (or 1 2 3) pin one, A returns to cycling, space
+// steps to the next. V (or 4) opens TALK, the voice agent. ?view=deck|sessions|attention|talk
+// pins from the URL.
+const QS = new URLSearchParams(location.search);
+const VIEWS = ["deck", "sessions", "attention", "trinity"];
+const DWELL = { deck: 45000, sessions: 35000, attention: 30000, trinity: 40000 };
+// What differs per machine comes from the feeder (config.py) as window.__config: the voice agents
+// (the first is TALK; a second one gets the other voice view), the remote machine, Trinity.
+const CFG = window.__config || { voice: [{ key: "agent", name: "Agent" }], remote: null, trinity: null };
+const VA = { talk: CFG.voice[0].key };                      // the voice views and the agent each one talks to
+if (CFG.voice[1]) VA.second = CFG.voice[1].key;
+const ORB = !!(CFG.voice[1] && CFG.voice[1].orb);
+const NAMES = Object.fromEntries(CFG.voice.map(a => [a.key, a.name]));
+if (DUSK && CFG.dusk) NAMES[VA.talk] = CFG.dusk.name;      // dusk skin: the first agent may appear as a character (config key `dusk`)
+// A desk belongs to one instance (config `desk.instance`; without it, to whichever is shown). For another instance, and
+// without a desk, the TRINITY page shows the instances themselves.
+const TVPLAIN = !(CFG.desk && (!CFG.desk.instance || (CFG.trinity && CFG.trinity.label === CFG.desk.instance)));
+if (TVPLAIN) CFG.desk = null;
+const viewOf = agent => VA.second && agent === VA.second ? "second" : CFG.desk && agent === CFG.desk.voice && agent !== VA.talk ? "trinity" : "talk";
+// the TRINITY view has a voice corner for the first agent: the same frame, placed over that corner
+const DESKV = CFG.desk && NAMES[CFG.desk.voice] ? CFG.desk.voice : VA.talk;   // the voice agent of the TRINITY view's corner
+const hereAgent = () => VA[view] || (view === "trinity" && !TVPLAIN ? DESKV : undefined);
+function placeTalk() {
+  const t = $("talk").style;
+  if (view !== "trinity" || TVPLAIN) { t.left = t.top = t.width = t.height = ""; return; }
+  const r = $("tv-voice").getBoundingClientRect(), s = $("stage").getBoundingClientRect();
+  t.left = (r.left - s.left) + "px"; t.top = (r.top - s.top) + "px"; t.width = r.width + "px"; t.height = r.height + "px";
+}
+addEventListener("resize", () => placeTalk());
+const ALLV = [...VIEWS, ...Object.keys(VA)];              // the voice views are entered on purpose, never by cycling
+const al = { deck: 1, sessions: 0, attention: 0, trinity: 0, talk: 0, second: 0 }; // how visible each view is (crossfade)
+let view = "deck", viewT = performance.now(), mix = 0, shownMix = "", pin = "auto";
+try { pin = QS.get("view") || localStorage.getItem("fd-view") || "auto"; } catch (e) { pin = QS.get("view") || "auto"; }
+if (pin !== "auto" && (!ALLV.includes(pin) || (VA[pin] && CFG.talk === false))) pin = "auto";   // a view this machine does not have
+let booted = false;
+function setView(v) {
+  if (v === view) return;
+  view = v; viewT = performance.now(); document.body.classList.toggle("v-talk", !!VA[v]); document.body.classList.toggle("v-tv", v === "trinity"); placeTalk(); if (booted) showTalk();
+  if (v === "trinity" && booted) pollMarvin();   // not during start-up: its state is declared further down
+  document.body.classList.toggle("v-orb", ORB && v === "second");
+  if (booted) loadOrb();                                   // not during start-up: the voice code below is not set up yet
+}
+function setPin(p) { if (VA[p] && typeof loadTalk === "function") loadTalk(VA[p]); pin = p; if (!VA[p]) try { localStorage.setItem("fd-view", p); } catch (e) {} if (p !== "auto") setView(p); viewT = performance.now(); }
+if (pin !== "auto") { setView(pin); for (const v of ALLV) al[v] = v === view ? 1 : 0; }
+function onKey(key) {                                      // true if the key was used
+  const k = String(key).toLowerCase();
+  if (k === "d" || k === "1") setPin("deck"); else if (k === "s" || k === "2") setPin("sessions");
+  else if (k === "t" || k === "3") setPin("attention"); else if (k === "m" || k === "6") setPin("trinity"); else if (k === "a") setPin("auto");
+  else if (k === "k") setSkin(SKINS[(SKINS.indexOf(SKIN_NAME) + 1) % SKINS.length]);
+  else if (CFG.talk === false && /^[45cv]$/.test(k)) return false;   // no voice skill on this machine: no voice views
+  else if (k === "4") setPin("talk"); else if ((k === "5" || k === "c") && VA.second) setPin("second"); else if (k === "v") toggleTalk();
+  else if (k === " " || k === "tab") { const vs = VIEWS; setPin(vs[(vs.indexOf(view) + 1) % vs.length]); }
+  else return false;
+  return true;
+}
+addEventListener("keydown", e => { if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;   // typing an answer
+  if (!(e.metaKey || e.ctrlKey || e.altKey) && onKey(e.key)) e.preventDefault(); });
+for (const b of document.querySelectorAll("#tabs button[data-v]")) if ((b.dataset.v === "second" && (!VA.second || CFG.talk === false)) || (b.dataset.v === "talk" && CFG.talk === false)) b.remove();
+  else if (b.dataset.v === "second") { b.textContent = NAMES[VA.second].toUpperCase(); b.title = "5 or C · voice with " + NAMES[VA.second]; }   // the second voice agent's own view
+for (const b of document.querySelectorAll("#tabs button[data-v]")) b.onclick = () => { setPin(b.dataset.v); b.blur(); };
+$("skin-btn").textContent = "◐ " + SKIN_NAME.toUpperCase();
+$("skin-btn").onclick = () => setSkin(SKINS[(SKINS.indexOf(SKIN_NAME) + 1) % SKINS.length]);
+// this is a window to work in now, so the pointer shows while the mouse moves and hides when it rests
+let mouseT = 0;
+addEventListener("mousemove", () => { document.body.classList.add("mouse"); clearTimeout(mouseT);
+  mouseT = setTimeout(() => document.body.classList.remove("mouse"), 3500); });
+
+// ---------- TALK mode: the /voice-agent page in a frame, started on demand by the feeder
+// The frame reports whether a conversation is running and forwards keys pressed inside it; this
+// page sends it start / stop. One voice server runs at a time, for the agent of the voice view last
+// used. V (or the button) starts and stops the conversation in its own view; from any other view V
+// goes back to the running conversation instead of ending it.
+const talk = { agent: VA.talk, url: "", busy: false, ready: false, talking: false, want: false, state: "", lips: false, gone: 0, since: 0 };
+const talkMsg = (text, warn) => { const m = $("talk-msg"); m.textContent = text; m.classList.toggle("warn", !!warn); };
+const voicePost = (path, body) => fetch(path, { method: "POST", headers: { "X-Flight-Deck": "1", "Content-Type": "application/json" },
+  body: JSON.stringify(body || {}) }).then(r => r.ok ? r.json() : Promise.reject(new Error("feeder said " + r.status)));
+const tellFrame = cmd => { const w = $("talk-frame").contentWindow; if (w && talk.url) w.postMessage({ fd: true, cmd }, new URL(talk.url).origin); };
+function showTalk() {
+  const here = hereAgent() || talk.agent, other = !!talk.url && here !== talk.agent;   // the frame holds the other agent's talk
+  $("talk-who").textContent = "Talk · " + NAMES[here];
+  const b = $("talk-go"); b.classList.toggle("on", talk.talking && !other);
+  b.firstChild.textContent = other && talk.talking ? "Back to " + NAMES[talk.agent] : talk.talking ? "Stop conversation"
+    : talk.busy || (talk.want && !talk.ready) ? "Starting…" : "Start conversation";
+  // the talking face needs its engine loaded (10-40 s after the server starts); say so until it is
+  // the engine reports no progress of its own, so the bar is an estimate from the usual load time: it eases toward full and
+  // disappears the moment the engine says it is ready
+  const warm = !!talk.url && !talk.lips;
+  $("talk-warm").hidden = !warm;
+  if (warm) $("talk-warm").querySelector("i").style.width = (100 * (1 - Math.exp(-(performance.now() - talk.since) / 14000))).toFixed(1) + "%";
+  if (other) { $("talk-take").hidden = false; $("talk-take").textContent = "Switch to " + NAMES[here];
+    talkMsg(`a conversation with ${NAMES[talk.agent]} is running · V goes back to it · Switch ends it and starts ${NAMES[here]}`, true); }
+  else if (talk.url) { $("talk-take").hidden = true;
+    if (talk.ready) talkMsg(talk.talking ? (talk.state || "listening") : "ready · V or the button starts the conversation"); }
+}
+function loadTalk(agent, force) {                           // start the server for that agent and load its page into the frame
+  if (talk.busy || (talk.url && talk.agent === agent)) return;
+  if (talk.url) {                                           // the other agent's session is loaded
+    if (talk.talking && !force) { showTalk(); return; }     // never end a running conversation without being asked
+    closeTalk(); force = true;
+  }
+  talk.agent = agent; talk.busy = true; $("talk-take").hidden = true; talkMsg(`starting the voice agent for ${NAMES[agent]}…`); showTalk();
+  voicePost("/voice/start", { agent, force: !!force }).then(r => {
+    talk.busy = false;
+    if (r.url) { talk.url = r.url; talk.ready = false; talk.gone = 0; talk.since = performance.now(); $("talk-frame").src = r.url; $("talk-stop").hidden = false; talkMsg("loading…"); }
+    else if (r.busy && r.ours && !force) { const want = talk.want; loadTalk(agent, true); talk.want = want; return; }  // our own idle server for the other agent (this page holds no conversation): switch it
+    else if (r.busy) { talk.want = false; $("talk-take").hidden = false; $("talk-take").textContent = "Take over";
+      talkMsg(`a voice session for ${r.agent} is already open elsewhere · Take over ends it and starts one here`, true); }
+    else { talk.want = false; talkMsg("could not start: " + (r.error || "unknown error"), true); }
+    showTalk();
+  }).catch(e => { talk.busy = false; talk.want = false; talkMsg("could not start: " + e.message, true); showTalk(); });
+}
+let toggledAt = 0;
+function toggleTalk(force) {                                // the button and the V key
+  if (performance.now() - toggledAt < 700) return;          // a double click or a repeated key: the second would undo the first
+  toggledAt = performance.now();
+  const here = hereAgent();                                 // the agent of the view in front, if it has a voice frame
+  if (talk.talking && !(force && here && here !== talk.agent)) {
+    if (here === talk.agent) { talk.want = false; tellFrame("stop"); }
+    else setPin(viewOf(talk.agent));                        // from elsewhere: back to the conversation, still running
+    return;
+  }
+  const agent = here || talk.agent;
+  talk.want = true;
+  if (talk.url && talk.ready && talk.agent === agent) tellFrame("start"); else loadTalk(agent, force);
+  if (!(view === "trinity" && agent === DESKV)) setPin(viewOf(agent));   // on the TRINITY view the talk happens in its corner
+  showTalk();
+}
+let orbT = 0;
+function loadOrb() {                                        // the second agent's live orb: loaded only while its view is in front
+  const f = $("orb-frame"); clearTimeout(orbT);
+  if (!ORB) return;
+  if (view !== "second") { orbT = setTimeout(() => { if (view !== "second") { f.src = "about:blank"; f.dataset.on = ""; } }, 1500); return; }
+  if (f.dataset.on) return;
+  f.dataset.on = "1";
+  voicePost("/orb/start").then(r => { if (r.url && view === "second") f.src = r.url; else if (!r.url) { f.dataset.on = ""; talkMsg("no orb: " + (r.error || "unknown error"), true); } })
+    .catch(() => { f.dataset.on = ""; });
+}
+function closeTalk(text) {
+  Object.assign(talk, { url: "", ready: false, talking: false, want: false, state: "", lips: false });
+  $("talk-frame").src = "about:blank"; $("talk-stop").hidden = true; talkMsg(text || `talk to ${NAMES[hereAgent() || talk.agent]}`); showTalk();
+}
+addEventListener("message", e => {
+  if (!talk.url || e.origin !== new URL(talk.url).origin || e.source !== $("talk-frame").contentWindow || !e.data || !e.data.fd) return;
+  const d = e.data;
+  if (d.ready) { talk.ready = true;
+    if (DUSK) $("talk-frame").contentWindow.postMessage(Object.assign({ fd: true, skin: "dusk" }, talk.agent === VA.talk && CFG.dusk ? { name: CFG.dusk.title || CFG.dusk.name, face: CFG.dusk.face } : {}), new URL(talk.url).origin);
+    if (talk.want) tellFrame("start"); }
+  if ("talking" in d) { talk.talking = !!d.talking; talk.state = d.state || ""; talk.lips = !!d.lips; if (d.talking) talk.want = false; }
+  if (d.key) onKey(d.key);
+  showTalk();
+});
+$("talk-go").onclick = () => { toggleTalk(); $("talk-go").blur(); };
+$("talk-take").onclick = () => toggleTalk(true);
+$("talk-stop").onclick = () => { voicePost("/voice/stop").catch(() => {}); closeTalk("closed"); };
+function syncTalk() {                                       // the server exits by itself when ended or idle
+  // Only after several readings in a row, and never right after a start: one stale snapshot must not blank the frame.
+  if (!talk.url || talk.busy || !S.voice || S.voice.ours) { talk.gone = 0; return; }
+  if (++talk.gone >= 5 && performance.now() - talk.since > 15000) closeTalk("the voice session ended");
+}
+function showTabs() {
+  for (const b of document.querySelectorAll("#tabs button[data-v]")) { const v = b.dataset.v;
+    const on = talk.talking && VA[v] === talk.agent;      // the conversation lives in this tab
+    b.classList.toggle("on", view === v); b.classList.toggle("live", on && view !== v);
+    b.classList.toggle("talking", on); }                  // a dot in the corner: the label keeps its width
+  $("tabs-pin").textContent = pin !== "auto" && !VA[view] ? "PINNED · A = AUTO" : "";
+}
+setInterval(() => { showTabs(); if (talk.url) showTalk(); }, 250);
+booted = true; loadOrb(); showTalk();
+if (VA[pin]) setTimeout(() => setPin(pin), 300);
+// one colour per subscription, the same everywhere on the page
+const ACC = SKIN.acc;
+const accColor = new Map();
+const colorOf = id => accColor.get(id) || SKIN.none;
+
+// boxes for what is not configured are left out
+if (CFG.remote) $("rem-l").textContent = CFG.remote.label; else $("rem-box").remove();
+$("tri-l").textContent = CFG.trinity ? CFG.trinity.label : "Trinity";      // the box stays without an instance: it is where one is connected
+
+// ---------- state
+let S = null, lastPush = 0, clockSkew = 0;
+const hist = { cpu: [], mem: [], down: [], up: [] };
+const sm = { cpu: 0, mem: 0, disk: 0, cores: [], busy: 0 };   // smoothed values the canvas draws
+const nodes = new Map();                                       // agent id -> orbit node
+const ripples = [], sparks = [];
+let seenFeed = 0;
+
+// Data arrives about once a second; nothing on screen should step. Each value moves linearly from
+// what is displayed now to the new sample over exactly one data interval, so it is always in motion
+// and arrives just as the next sample lands.
+const tw = {};
+let pushGap = 1000, shownCpu = -1, lastUsageKey = "";
+function tget(name, now) { const x = tw[name]; if (!x) return 0; const u = Math.min(1, (now - x.t0) / pushGap); return x.from + (x.to - x.from) * u; }
+function tset(name, v, now) { tw[name] = { from: tw[name] ? tget(name, now) : v, to: v, t0: now }; }
+
+window.__push = function (data) {
+  if (typeof data === "string") data = JSON.parse(data);
+  const tnow = performance.now();
+  if (lastPush) pushGap = Math.max(400, Math.min(4000, pushGap * .5 + (tnow - lastPush) * .5));
+  S = data; lastPush = tnow;
+  if (typeof triApply === "function") { triApply(); triChip(); if (tri.open && !tri.busy && !tri.form) triDraw(); }
+  clockSkew = Date.now() / 1000 - data.ts;
+  const m = data.machine;
+  for (const [k, v] of [["cpu", m.cpu], ["mem", m.mem.pct], ["down", m.net.down], ["up", m.net.up]]) {
+    hist[k].push(v); if (hist[k].length > 92) hist[k].shift();
+  }
+  tset("cpu", m.cpu, tnow); tset("mem", m.mem.pct, tnow); tset("disk", m.disk.pct, tnow);
+  m.cores.forEach((v, i) => tset("core" + i, v, tnow));
+  tset("netmax", Math.max(1, ...hist.down, ...hist.up) * 1.15, tnow);
+  renderPanels();
+  syncNodes();
+  renderSessions();
+  renderAttention();
+  syncTalk();
+  for (const e of data.usage.feed || []) {
+    if (e.ts > seenFeed && seenFeed && view === "deck") {
+      const n = [...nodes.values()].find(n => n.a.project === e.project);
+      ripples.push({ node: n || null, t: 0, color: e.kind === "prompt" ? C.amber : C.green });
+    }
+  }
+  seenFeed = Math.max(seenFeed, ...(data.usage.feed || []).map(e => e.ts), 0);
+};
+
+// In a browser (no native host pushing), poll the feeder ourselves.
+setTimeout(() => {
+  if (window.__native) return;
+  const poll = () => !awake ? null : fetch("state.json", { cache: "no-store" }).then(r => r.json()).then(window.__push).catch(e => { window.__err = String(e && e.stack || e); });
+  wakeHooks.push(poll); poll(); setInterval(poll, 1000);
+}, 300);
+
+// ---------- DOM panels
+function spark(canvas, series, colors, max, frac) {
+  const dpr = devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== w * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; }
+  const c = canvas.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+  const top = max, step = w / 88;
+  series.forEach((s, i) => {
+    if (s.length < 2) return;
+    c.beginPath();
+    s.forEach((v, j) => { const x = w + step * (1 - frac) - (s.length - 1 - j) * step, y = h - 1 - (v / top) * (h - 3); j ? c.lineTo(x, y) : c.moveTo(x, y); });
+    c.strokeStyle = colors[i]; c.lineWidth = 1.4; c.lineJoin = "round"; c.stroke();
+    if (i === 0) { c.lineTo(w + step, h); c.lineTo(w + step * (1 - frac) - (s.length - 1) * step, h); c.closePath();
+      const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, colors[i] + "40"); g.addColorStop(1, colors[i] + "00");
+      c.fillStyle = g; c.fill(); }
+  });
+}
+
+// ---------- other machines: the remote box and the Trinity instances
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const barRow = (label, pct, text) => { const p = Math.max(0, Math.min(100, pct || 0));
+  return `<div class="r"><span>${label}</span><div class="bar"><b class="${p >= 92 ? "hi" : p >= 75 ? "mid" : ""}" style="width:${p}%"></b></div><span>${text}</span></div>`; };
+function head(id, d, text) {
+  const h = $(id);
+  if (!d) { h.className = "wait"; h.textContent = "…"; return false; }
+  if (!d.ok) { h.className = "off"; h.textContent = "UNREACHABLE"; return false; }
+  h.className = ""; h.textContent = text; return true;
+}
+function renderRemote() {
+  const d = S.remote, t = S.trinity, G = 2 ** 30;
+  if (!CFG.remote) {} else if (head("remote-h", d, d && d.ok ? `${d.host} · up ${ago(d.uptime)}` : "")) {
+    let h = "";
+    if (d.gpu) h += barRow("GPU", d.gpu.util, `${Math.round(d.gpu.util || 0)}% · ${Math.round(d.gpu.temp)}° · ${Math.round(d.gpu.watts)} W`);
+    if (d.cpu != null) h += barRow("CPU", d.cpu, `${Math.round(d.cpu)}% · load ${d.load.toFixed(1)}`);
+    if (d.mem) h += barRow("MEM", d.mem.used / d.mem.total * 100, `${Math.round(d.mem.used / G)} / ${Math.round(d.mem.total / G)} GB`);
+    if (d.disk) h += barRow("DISK", (1 - d.disk.free / d.disk.total) * 100, `${Math.round(d.disk.free / G)} GB free`);
+    $("remote").innerHTML = h;
+  } else if (d) $("remote").innerHTML = `<div class="note">${esc(d.err || "")}</div>`;
+  if (!CFG.trinity) {
+    $("tri-h").className = "wait"; $("tri-h").textContent = "not connected";
+    if (!$("tri").dataset.empty) { $("tri").dataset.empty = "1";
+      $("tri").innerHTML = `<div class="note">No Trinity instance yet. Connect one with its address and MCP key.</div><button class="ti-btn" data-add="1">Connect an instance</button>`; }
+  } else if (head("tri-h", t, t && t.ok ? `${N(t.agents.running)}/${N(t.agents.total)} running` : "")) {
+    let h = `<div class="note">runs <b>${N(t.day.done)}</b>/24h · <b>${t.hour.done}</b>/1h` + (t.hour.running ? ` · <em>${t.hour.running} now</em>` : "") +
+      (t.day.failed ? ` · <em class="crit">${t.day.failed} failed</em>` : "") + `</div>`;
+    const q = t.queue;
+    if (q) {
+      h += `<div class="note">queue <b>${q.pending}${q.more ? "+" : ""}</b> waiting for you` + (q.critical ? ` · <em class="crit">${q.critical} critical</em>` : "") + `</div>`;
+      for (const it of q.top.slice(0, 2)) h += `<div class="ln${it.priority === "critical" ? " crit" : ""}"><i></i><b>${esc(it.title)}</b><span>${esc(it.agent)}</span></div>`;
+    }
+    const mx = Math.max(1, ...t.active.map(a => a.day));
+    for (const a of t.active.slice(0, Math.max(2, 6 - 2 * (S.trinities || []).length))) h += `<div class="act${a.hour ? " on" : ""}"><i></i><b>${esc(a.name)}</b><u><s style="width:${a.day / mx * 100}%"></s></u><span>${a.day}</span></div>`;
+    for (const o of S.trinities || []) h += !o.ok ? `<div class="note sw" data-switch="${esc(o.label)}" title="show ${esc(o.label)} in full"><b>${esc(o.label)}</b> · <em class="crit">${o.wait ? "…" : "unreachable"}</em></div>`
+      : `<div class="note sw" data-switch="${esc(o.label)}" title="show ${esc(o.label)} in full"><b>${esc(o.label)}</b> · ${N(o.agents.running)}/${N(o.agents.total)} running · runs <b>${N(o.day.done)}</b>/24h` + (o.queue && o.queue.pending ? ` · queue <b>${o.queue.pending}</b>` : "") + (o.day.failed ? ` · <em class="crit">${o.day.failed} failed</em>` : "") + `</div>`;
+    $("tri").innerHTML = h;
+    const end = $("tri-box").getBoundingClientRect().bottom - 6;  // short screens: drop rows that do not fit
+    for (const r of $("tri").children) r.style.visibility = r.getBoundingClientRect().bottom > end ? "hidden" : "";
+  } else if (t) $("tri").innerHTML = `<div class="note">${esc(t.err || "")}</div>`;
+}
+
+// ---------- Trinity instances: add (address + MCP key), choose the one shown in full, remove.
+// The feeder tries a new instance before saving it and keeps the key in the Keychain; this page never gets a key back.
+// Which instance is the main one is fixed when the page loads, so a change reloads it (not during a conversation).
+const tri = { open: false, form: false, busy: false, msg: "", err: false, sure: "" };
+function triList() { return (S && S.instances) || []; }
+function triApply() {                                       // the main instance differs from the one this page was built for
+  const main = triList()[0], want = main ? main.label : null, have = CFG.trinity ? CFG.trinity.label : null;
+  if (!window.__config || !S || !("instances" in S) || want === have || tri.busy) return;
+  if (typeof talk !== "undefined" && talk.talking) { tri.msg = "applies when the conversation ends"; tri.err = false; if (tri.open) triDraw(); return; }
+  if (tri.open && tri.form && !tri.done) return;            // someone is typing into the form
+  try { const last = +sessionStorage.getItem("fd-tri-reload") || 0; if (Date.now() - last < 8000) return; sessionStorage.setItem("fd-tri-reload", Date.now()); } catch (e) {}
+  location.reload();
+}
+function triDraw() {
+  let m = $("tri-menu");
+  if (!tri.open) { if (m) m.remove(); return; }
+  if (!m) { m = document.createElement("div"); m.id = "tri-menu"; document.body.append(m); }
+  const keep = {}; for (const i of m.querySelectorAll("input")) keep[i.name] = i.value;    // what was typed survives a redraw
+  const list = triList();
+  let h = `<h6>Trinity instances</h6>`;
+  if (!list.length) h += `<div class="ti-none">None connected yet.</div>`;
+  for (const it of list) h += `<div class="ti-row${it.main ? " main" : ""}"><i></i><b>${esc(it.label)}<small>${esc(it.host)}</small></b>` +
+    (it.main ? `<em>shown in full</em>` : `<button class="ti-btn" data-main="${esc(it.label)}"${tri.busy ? " disabled" : ""}>Show</button>`) +
+    `<button class="ti-x${tri.sure === it.label ? " sure" : ""}" data-rm="${esc(it.label)}" title="disconnect ${esc(it.label)}">${tri.sure === it.label ? "Remove?" : "×"}</button></div>`;
+  if (tri.form) h += `<form autocomplete="off"><label>Address<input name="url" placeholder="https://trinity.example.com" spellcheck="false" autocapitalize="off"></label>` +
+    `<label>MCP key<input name="key" type="password" placeholder="the instance's MCP API key" autocomplete="new-password"></label>` +
+    `<label>Name<input name="label" placeholder="optional" maxlength="40" spellcheck="false"></label>` +
+    `<div class="ti-foot"><span class="ti-msg${tri.err ? " err" : ""}">${esc(tri.msg || "The key is kept in the Keychain of this Mac.")}</span>` +
+    `<button type="button" class="ti-btn" data-cancel="1">Cancel</button><button class="ti-btn go"${tri.busy ? " disabled" : ""}>${tri.busy ? "Connecting…" : "Connect"}</button></div></form>`;
+  else h += `<div class="ti-foot"><span class="ti-msg${tri.err ? " err" : ""}">${esc(tri.msg)}</span><button class="ti-btn" data-add="1">+ Add instance</button></div>`;
+  m.innerHTML = h;
+  for (const i of m.querySelectorAll("input")) if (keep[i.name]) i.value = keep[i.name];
+  const r = $(view === "trinity" ? "tv-chip" : "tri-chip").getBoundingClientRect(), mh = m.offsetHeight, mw = m.offsetWidth;
+  m.style.left = Math.max(8, Math.min(r.left, innerWidth - mw - 8)) + "px";
+  m.style.top = Math.max(8, Math.min(r.bottom + 6, innerHeight - mh - 8)) + "px";
+}
+function triOpen(form) {
+  Object.assign(tri, { open: true, form: !!form || !triList().length, msg: "", err: false, sure: "", done: false });
+  document.body.classList.add("mouse"); triDraw();
+  const f = $("tri-menu").querySelector("input"); if (f) f.focus();
+}
+function triClose() { tri.open = false; triDraw(); }
+function triDo(path, body, after) {
+  if (tri.busy) return;
+  tri.busy = true; tri.msg = ""; tri.err = false; triDraw();
+  voicePost(path, body).then(r => {
+    tri.busy = false;
+    if (!r.ok) { tri.msg = r.error || "that did not work"; tri.err = true; triDraw(); return; }
+    if (S) S.instances = r.instances;
+    tri.done = true; tri.sure = ""; if (after) after(r);
+    triDraw(); triApply();
+  }).catch(e => { tri.busy = false; tri.msg = "the feeder did not answer: " + e.message; tri.err = true; triDraw(); });
+}
+$("tri-l").onclick = () => tri.open ? triClose() : triOpen(false);
+{ const c = document.createElement("button"); c.id = "tri-chip"; c.title = "connect, switch or remove Trinity instances"; $("tri-l").append(c); }
+function triChip() {
+  const n = triList().length, t = (n > 1 ? n + " instances" : n ? "instances" : "connect") + " \u25BE";
+  $("tri-chip").textContent = t; $("tv-chip").textContent = t;
+  $("tv-name").textContent = CFG.trinity ? CFG.trinity.label : "No instance";
+  if (TVPLAIN) tvInst();
+}
+// The TRINITY page without a desk: one card an instance, the one shown in full first, and a card to connect another.
+let tvInstKey = "";
+function tvInst() {
+  const t = S && S.trinity, list = triList(), others = (S && S.trinities) || [];
+  const state = d => !d ? ["wait", "connecting…"] : !d.ok ? ["off", "unreachable"] : ["", "connected"];
+  let h = "";
+  if (list.length) {
+    const m = list[0], [c, w] = state(t);
+    h += `<div class="card main"><h3>${esc(m.label)}<small class="${c}">${w}</small></h3><div class="host">${esc(m.host)}</div>`;
+    if (t && t.ok) {
+      h += `<div class="nums"><div>${N(t.agents.running)}<small>of ${N(t.agents.total)} agents running</small></div><div>${N(t.day.done)}<small>runs · 24 h</small></div>` +
+        `<div>${t.hour.done}<small>runs · 1 h</small></div>` + (t.day.failed ? `<div class="bad">${t.day.failed}<small>failed</small></div>` : "") +
+        (t.queue ? `<div>${t.queue.pending}${t.queue.more ? "+" : ""}<small>waiting for you</small></div>` : "") + `</div><div class="rem">`;
+      for (const it of (t.queue ? t.queue.top : []).slice(0, 3)) h += `<div class="ln${it.priority === "critical" ? " crit" : ""}"><i></i><b>${esc(it.title)}</b><span>${esc(it.agent)}</span></div>`;
+      const mx = Math.max(1, ...t.active.map(a => a.day));
+      for (const a of t.active) h += `<div class="act${a.hour ? " on" : ""}"><i></i><b>${esc(a.name)}</b><u><s style="width:${a.day / mx * 100}%"></s></u><span>${a.day}</span></div>`;
+      h += `</div>`;
+    } else if (t && t.err) h += `<div class="host">${esc(t.err)}</div>`;
+    h += `</div>`;
+    for (const o of others) { const [c2, w2] = o.wait ? ["wait", "connecting…"] : !o.ok ? ["off", "unreachable"] : ["", "connected"];
+      const it = list.find(x => x.label === o.label) || {};
+      h += `<div class="card"><h3>${esc(o.label)}<small class="${c2}">${w2}</small></h3><div class="host">${esc(it.host || "")}</div>` +
+        (o.ok ? `<div class="nums"><div>${N(o.agents.running)}<small>of ${N(o.agents.total)} running</small></div><div>${N(o.day.done)}<small>runs · 24 h</small></div>` +
+          (o.day.failed ? `<div class="bad">${o.day.failed}<small>failed</small></div>` : "") + (o.queue ? `<div>${o.queue.pending}<small>waiting</small></div>` : "") + `</div>` : "") +
+        `<button class="ti-btn" data-main="${esc(o.label)}">Show in full</button></div>`; }
+  }
+  h += `<div class="card add"><p>${list.length ? "Connect another Trinity instance." : "No Trinity instance is connected yet."}<br>It takes the instance's address and its MCP key.</p>` +
+    `<button class="ti-btn${list.length ? "" : " go"}" data-add="1">${list.length ? "+ Add instance" : "Connect an instance"}</button></div>`;
+  if (h !== tvInstKey) { tvInstKey = h; $("tv-inst").innerHTML = h; }
+}
+$("tv").classList.toggle("plain", TVPLAIN);
+$("tv-chip").onclick = () => tri.open ? triClose() : triOpen(false);
+$("tv-inst").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.add) triOpen(true);
+  else if (b.dataset.main) { triOpen(false); triDo("/trinity/main", { label: b.dataset.main }, r => { tri.msg = r.label + " is now shown in full"; }); }
+});
+triChip();
+$("tri").addEventListener("click", e => {
+  if (e.target.closest("[data-add]")) return triOpen(true);
+  const sw = e.target.closest("[data-switch]");
+  if (sw) { triOpen(false); triDo("/trinity/main", { label: sw.dataset.switch }, r => { tri.msg = r.label + " is now shown in full"; }); }
+});
+addEventListener("click", e => {
+  const m = $("tri-menu");
+  if (!m) return;
+  if (!m.contains(e.target)) { if (!e.target.closest("#tri-l, #tri, #tv-chip, #tv-inst")) triClose(); return; }
+  const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.add) { tri.form = true; tri.msg = ""; tri.err = false; tri.done = false; triDraw(); $("tri-menu").querySelector("input").focus(); }
+  else if (t.dataset.cancel) { if (triList().length) { tri.form = false; tri.msg = ""; tri.err = false; triDraw(); } else triClose(); }
+  else if (t.dataset.main) triDo("/trinity/main", { label: t.dataset.main }, r => { tri.msg = r.label + " is now shown in full"; });
+  else if (t.dataset.rm) {
+    if (tri.sure !== t.dataset.rm) { tri.sure = t.dataset.rm; triDraw(); }
+    else triDo("/trinity/remove", { label: t.dataset.rm }, r => { tri.msg = r.label + " disconnected"; });
+  }
+});
+addEventListener("submit", e => {
+  const m = $("tri-menu");
+  if (!m || !m.contains(e.target)) return;
+  e.preventDefault();
+  const v = Object.fromEntries([...e.target.querySelectorAll("input")].map(i => [i.name, i.value.trim()]));
+  if (!v.url || !v.key) { tri.msg = "give the address and the MCP key"; tri.err = true; triDraw(); return; }
+  triDo("/trinity/add", v, r => { tri.form = false; tri.msg = r.label + " connected"; for (const i of e.target.querySelectorAll("input")) i.value = ""; });
+});
+addEventListener("keydown", e => { if (e.key === "Escape" && tri.open) { triClose(); e.stopPropagation(); } }, true);
+
+// ---------- TRINITY view: asks, projects, services. Its own slower feed (/marvin.json), asked for
+// only while the page is awake; the feeder refreshes it at most every two minutes.
+let M = null, mT = 0;
+function pollMarvin() {
+  if (!CFG.trinity || !awake || TVPLAIN) return;
+  mT = performance.now();
+  fetch("marvin.json", { cache: "no-store" }).then(r => r.json()).then(d => { if (d) { M = d; renderMarvin(); } else setTimeout(pollMarvin, 4000); }).catch(() => {});
+}
+function age(ts) { const s = Date.now() / 1000 - ts; return s < 3600 ? Math.max(1, Math.floor(s / 60)) + "m" : s < 86400 ? Math.floor(s / 3600) + "h" : Math.floor(s / 86400) + "d"; }
+function fmt(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/\n{2,}/g, "<br><br>").replace(/\n/g, "<br>"); }
+function askRows(a) {
+  const row = i => `<div class="ask ${esc(i.priority)}"><i></i><span class="${Date.now() / 1000 - i.at > 5 * 86400 ? "old" : ""}">${age(i.at)}</span><span>${esc(i.agent)}</span><b>${esc(i.title || i.type)}${i.moved ? " · changed since" : ""}</b><span class="id">${esc(i.id)}</span></div>`;
+  const dec = a.items.filter(i => i.type !== "alert"), alerts = a.items.filter(i => i.type === "alert");
+  return `<h5>Decisions · ${dec.length}</h5>` + dec.map(row).join("") + `<h5>Alerts · ${alerts.length}</h5>` + alerts.map(row).join("");
+}
+function prjRows(p) {
+  const busy = p.items.filter(x => x.open || x.live || x.health === "off-track"), quiet = p.items.length - busy.length;
+  return `<div class="prj"><i style="visibility:hidden"></i><span class="st">project</span><span class="st">steward</span><span>open</span><span>attn</span></div>` +
+    busy.map(x => `<div class="prj ${esc(x.health)}${x.live ? " live" : ""}"><i></i><b>${esc(x.name || "project")}${x.live ? " · running" : ""}</b><span class="st">${esc(x.steward)}${x.mode && x.mode !== "track" ? " · " + esc(x.mode) : ""}</span><span>${x.open}</span><span class="${x.attention ? "at" : ""}">${x.attention || ""}</span></div>`).join("") +
+    (quiet ? `<h5>+ ${quiet} with no open tasks</h5>` : "");
+}
+// The stage: one card. It comes from /stage.json (Marvin's loop, or Marvin in a conversation); a click
+// on the asks or projects tile puts the whole list there until the next card arrives or a second click.
+let ST = null, stT = 0, stShown = "", stLocal = "";
+function pollStage() {
+  if (!CFG.trinity || !awake || TVPLAIN) return;
+  stT = performance.now();
+  fetch("stage.json", { cache: "no-store" }).then(r => r.json()).then(d => {
+    if (!d) return;
+    const was = ST && ST.current && ST.current.id, c = d.current;
+    ST = d;
+    if (c && c.id !== was) { stLocal = ""; stAsk = "";     // something new came up: it wins over what was opened by hand
+      if (was && c.kind === "ask" && dqSel == null && !dqBusy) dqFocus(c.ref, false);   // and DECIDE turns to it, unless an answer is half given
+      if (was && pin === "auto" && view !== "trinity" && !VA[view] && c.rank <= 1 && !c.ambient) setView("trinity"); }   // urgent: bring the page forward
+    renderStage();
+  }).catch(() => {});
+}
+function renderStage() {
+  if (!ST) return;
+  const box = $("tv-stage"), focus = stAsk && dqItems().find(i => i.id === stAsk);
+  const ctx = focus && { id: "ask:" + focus.id, kind: "ask", rank: focus.rank, kicker: focus.type + " · " + focus.agent + " · " + focus.priority, at: focus.at, short: focus.short,
+    title: focus.title, body: focus.question, facts: focus.facts, take: focus.take };
+  const c = stLocal ? { id: "local:" + stLocal, kind: "list", which: stLocal, rank: 5, kicker: "all of them", title: stLocal === "asks" ? "Everything that waits for you" : "All projects" } : ctx || ST.current;
+  for (const t of document.querySelectorAll("#tv .tile[data-list]")) t.classList.toggle("on", t.dataset.list === stLocal);
+  let h = "";
+  if (!c) h = `<div class="kick"><span>stage</span></div><h2>Nothing needs you right now.</h2>`;
+  else {
+    h = `<div class="kick"><span><b>${esc(c.kicker || c.kind)}</b></span><span>${c.at ? age(c.at) + " old" : ""}${c.short ? " · " + esc(c.short) : ""}</span></div><h2>${esc(c.title)}</h2>`;
+    if (c.kind === "list") h += `<div class="list">${M && M[c.which] && M[c.which].items ? (c.which === "asks" ? askRows(M.asks) : prjRows(M.projects)) : "…"}</div>`;
+    else {
+      const t = c.take;
+      if (t && t.text) h += `<div class="take"><small>${esc((ST && ST.name || "desk").toUpperCase())}</small>${esc(t.text)}${t.why && t.recommend ? ` <i>${esc(t.why)}</i>` : ""}</div>`;
+      const lead = c.kind === "project" && c.body;       // a project leads with its latest status line
+      if (lead) h += `<div class="take"><small>STATUS</small>${esc(c.body)}</div>`;
+      if (c.kind !== "ask" && c.options && c.options.length) h += `<div class="opts">` + c.options.map(o => `<div class="opt${t && t.recommend === o.label ? " rec" : ""}"><b>${esc(o.label)}</b><span>${esc(o.effect)}</span></div>`).join("") + `</div>`;
+      if (c.rows && c.rows.length) h += `<div class="list" style="font-family:var(--sans);flex:none;margin-bottom:.6em">` + c.rows.map(r => `<div class="trow"><span>${esc(r.a)}</span><b>${esc(r.b)}</b><span class="${esc(r.c)}">${esc(r.c)}</span><span>${esc(r.d)}</span></div>`).join("") + (c.more ? `<h5>+ ${c.more} more open</h5>` : "") + `</div>`;
+      h += `<div class="body">${lead ? "" : fmt(c.body || "")}` + (c.notes && c.notes.length ? (lead ? "" : "<br><br>") + c.notes.map(n => `<b>${esc(n.who)}</b> · ${n.at ? age(n.at) + " ago" : ""} · ${esc(n.text)}`).join("<br>") : "") + `</div>`;
+      if (c.facts && c.facts.length) h += `<div class="facts">` + c.facts.map(f => `<span>${esc(f[0])} <b>${esc(f[1])}</b></span>`).join("") + `</div>`;
+    }
+    if (c.foot) h += `<div class="foot">${esc(c.foot).replace(/^say: (.*)$/, "say: <b>$1</b>")}</div>`;
+  }
+  const key = (c ? c.id + "|" + (c.take ? 1 : 0) : "none") + "|" + (c && c.kind === "list" && M ? M.ts : "");
+  if (key !== stShown) {
+    const fresh = stShown && c && !stShown.startsWith(c.id + "|");
+    stShown = key; box.innerHTML = h; box.className = c ? "r" + Math.min(5, c.rank == null ? 5 : c.rank) : "";
+    if (fresh) { void box.offsetWidth; box.classList.add("fresh"); }
+  }
+  const now = Date.now() / 1000;
+  $("tv-feed").innerHTML = (ST.feed || []).slice(0, 6).map(f => `<div class="f-${esc(f.kind)}${now - f.ts < 180 ? " new" : ""}"><span>${hhmm(f.ts)}</span><b>${esc(f.text)}</b></div>`).join("");
+  $("tv-loop").textContent = ST.loop ? (now - ST.loop < 200 ? "watching" : "loop silent " + age(ST.loop)) : "";
+  $("tv-loop").className = ST.loop && now - ST.loop >= 200 ? "warn" : "";
+}
+for (const t of document.querySelectorAll("#tv .tile[data-list]")) t.onclick = () => { stLocal = stLocal === t.dataset.list ? "" : t.dataset.list; renderStage(); };
+setInterval(() => { if (CFG.trinity && awake && performance.now() - stT > (view === "trinity" ? 3000 : 12000)) pollStage(); }, 1000);
+pollStage(); wakeHooks.push(pollStage);
+// ---------- DECIDE: the asks that wait for an answer, one at a time, answered by a click.
+// The list comes from Marvin's loop (/decisions.json). A click on an option selects it; a second
+// click on "Record" sends it to the platform as this person's answer (the feeder calls
+// respond_to_operator_queue with the key configured for Trinity). An answer is final, hence two
+// clicks. After an answer the next one comes up. The stage shows the context of the one in focus.
+let DQ = null, dqT = 0, dqId = "", dqSel = null, dqBusy = false, dqMsg = "", dqErr = false, dqShown = "", stAsk = "";
+const dqItems = () => DQ && DQ.items || [];
+const dqItem = () => dqItems().find(i => i.id === dqId);
+function pollDecisions() {
+  if (!CFG.trinity || !awake || TVPLAIN) return;
+  dqT = performance.now();
+  fetch("decisions.json", { cache: "no-store" }).then(r => r.json()).then(d => {
+    if (!d) return;
+    DQ = d;
+    if (!dqItem()) {                                        // start on the ask the stage shows, else on the most urgent
+      const on = ST && ST.current && ST.current.kind === "ask" && dqItems().find(i => i.id === ST.current.ref);
+      dqId = on ? on.id : dqItems().length ? dqItems()[0].id : ""; dqSel = null;
+      if (!on && dqId && !(ST && ST.current && !ST.current.ambient && ST.current.kind !== "ask")) stAsk = dqId;   // and the stage shows its context
+    }
+    renderDecide(); renderStage();
+  }).catch(() => {});
+}
+function dqFocus(id, byHand) {
+  if (!dqItems().some(i => i.id === id)) return;
+  dqId = id; dqSel = null; dqMsg = ""; dqErr = false;
+  if (byHand) { stAsk = id; stLocal = ""; }
+  renderDecide(); renderStage();
+}
+function dqStep(n) {
+  const it = dqItems(), k = it.findIndex(i => i.id === dqId);
+  if (it.length) dqFocus(it[(Math.max(0, k) + n + it.length) % it.length].id, true);
+}
+function dqSend(response, text) {
+  const it = dqItem(); if (!it || dqBusy) return;
+  dqBusy = true; dqMsg = "recording…"; dqErr = false; renderDecide();
+  voicePost("/ask/answer", { id: it.id, response, response_text: text || "" }).then(r => {
+    dqBusy = false;
+    if (!r.ok) { dqMsg = r.error || "the platform refused it"; dqErr = true; renderDecide(); return; }
+    const all = dqItems(), k = all.findIndex(i => i.id === it.id);
+    DQ.items = all.filter(i => i.id !== it.id);            // answered: the next one comes up
+    const next = DQ.items[Math.min(k, DQ.items.length - 1)];
+    dqId = next ? next.id : ""; dqSel = null; stAsk = dqId; stLocal = "";
+    dqMsg = "recorded: " + (text && response === "(something else)" ? text : response); dqErr = false;
+    renderDecide(); renderStage(); setTimeout(pollStage, 600);
+  }).catch(e => { dqBusy = false; dqMsg = "could not reach the feeder: " + e.message; dqErr = true; renderDecide(); });
+}
+function renderDecide() {
+  const box = $("dq"), it = dqItem(), all = dqItems();
+  $("dq-n").textContent = all.length ? (all.findIndex(i => i.id === dqId) + 1) + " of " + all.length : "";
+  const key = [dqId, dqSel, dqBusy, dqMsg, all.length, it && it.take ? 1 : 0].join("|");
+  if (key === dqShown) return;                              // never redraw under a text box being typed in
+  dqShown = key;
+  const note = dqMsg ? `<div class="dq-msg${dqErr ? " err" : ""}">${esc(dqMsg)}</div>` : "";
+  if (!it) { box.innerHTML = note + `<h3>${DQ ? "Nothing waits for your answer." : "…"}</h3>`; return; }
+  const rec = it.take && it.take.recommend || "";
+  let h = note + `<div class="dq-k"><b class="${esc(it.priority)}">${esc(it.priority)}</b> · ${esc(it.agent)} · ${age(it.at)} old${it.moved ? " · changed since it was raised" : ""}</div><h3>${esc(it.title)}</h3>`;
+  h += `<div class="dq-opts">`;
+  it.options.forEach((o, n) => {
+    const on = dqSel === n;
+    h += `<div class="dq-o${on ? " on" : ""}${rec === o.label ? " rec" : ""}" data-act="pick" data-n="${n}"><b>${esc(o.label)}</b><span>${esc(o.effect)}</span>` +
+      (on ? `<div class="dq-go"><button data-act="send" ${dqBusy ? "disabled" : ""}>Record this answer</button><button data-act="unpick" class="quiet">cancel</button></div>` : "") + `</div>`;
+  });
+  h += `</div><div class="dq-else"><input id="dq-text" placeholder="${it.options.length ? "something else: say what to do instead" : "your answer"}" autocomplete="off" spellcheck="false"><button data-act="else" ${dqBusy ? "disabled" : ""}>Send</button></div>`;
+  h += `<div class="dq-nav"><button data-act="prev" class="quiet">‹ back</button><span>${esc(it.short)}</span><button data-act="next" class="quiet">skip ›</button></div>`;
+  box.innerHTML = h;
+}
+$("dq").addEventListener("click", e => {
+  const t = e.target.closest("[data-act]"); if (!t) return;
+  const act = t.dataset.act, it = dqItem();
+  if (act === "pick") { if (e.target.closest(".dq-go")) return; dqSel = +t.dataset.n; dqMsg = ""; renderDecide(); }
+  else if (act === "unpick") { dqSel = null; renderDecide(); e.stopPropagation(); }
+  else if (act === "send" && it && dqSel != null) { dqSend(it.options[dqSel].label); e.stopPropagation(); }
+  else if (act === "else" && it) { const v = $("dq-text").value.trim(); if (!v) { $("dq-text").focus(); return; }
+    if (t.dataset.sure !== "1") { t.dataset.sure = "1"; t.textContent = "Record"; return; }   // two clicks here too
+    if (it.options.length) dqSend("(something else)", v); else dqSend(v); }
+  else if (act === "prev") dqStep(-1); else if (act === "next") dqStep(1);
+});
+// Marvin, in voice or text, should know what is in front of the person: tell the feeder what DECIDE shows.
+let focusSent = "";
+function sendFocus() {
+  const it = dqItem(), all = dqItems();
+  const f = { ask: it ? it.id : "", view, n: it ? all.findIndex(i => i.id === it.id) + 1 : 0, of: all.length, picked: it && dqSel != null ? it.options[dqSel].label : "" };
+  const key = JSON.stringify(f) + (ST && ST.current ? ST.current.id : "");
+  if (key === focusSent || !DQ) return;
+  focusSent = key;
+  voicePost("/focus", f).catch(() => { focusSent = ""; });
+}
+setInterval(sendFocus, 1500);
+setInterval(() => { if (CFG.trinity && awake && !dqBusy && performance.now() - dqT > (view === "trinity" ? (talk.talking ? 3000 : 15000) : 60000)) pollDecisions(); }, 1000);
+pollDecisions(); wakeHooks.push(pollDecisions);
+
+setInterval(() => { if (view === "trinity") placeTalk(); }, 2000);   // the corner moves when the rows around it change height
+
+const N = x => Number(x) || 0;   // a count that is about to be written into markup
+function renderMarvin() {
+  if (!M) return;
+  const a = M.asks || {}, p = M.projects || {}, f = M.fleet || {}, ac = M.activity || {};
+  if (a.items) {
+    const dec = a.items.filter(i => i.type !== "alert").length;
+    $("tv-n-asks").firstChild.textContent = dec;
+    $("tv-s-asks").innerHTML = (a.critical ? `<em class="crit">${N(a.critical)} critical</em> · ` : "") + `<b>${N(a.by.alert || 0)}</b> alerts` + (a.oldest ? ` · oldest <em>${age(a.oldest)}</em>` : "");
+    $("tv-d-asks").innerHTML = a.items.map(i => `<i class="${i.priority === "critical" ? "r" : i.type === "alert" ? "h" : i.priority === "high" ? "a" : ""}"></i>`).join("");
+  }
+  if (p.items) {
+    $("tv-n-prj").firstChild.textContent = p.total;
+    $("tv-s-prj").innerHTML = (p.off ? `<em class="crit">${N(p.off)} off track</em> · ` : "") + `<em>${N(p.risk)} at risk</em> · <b>${N(p.attention)}</b> tasks need you`;
+    const o = { "off-track": 0, "at-risk": 1, "on-track": 2 };
+    $("tv-d-prj").innerHTML = [...p.items].sort((x, y) => (o[x.health] ?? 3) - (o[y.health] ?? 3)).map(x => `<i class="${x.health === "off-track" ? "r" : x.health === "at-risk" ? "a" : x.health === "on-track" ? "g" : ""}"></i>`).join("");
+  }
+  if (ac.lanes) {
+    const W = ac.hours * 3600, mx = Math.max(1, ...ac.buckets.map(b => b.n)), live = ac.now.length;
+    const dur = x => x >= 3600 ? Math.floor(x / 3600) + "h " + Math.floor(x % 3600 / 60) + "m" : Math.max(1, Math.round(x / 60)) + "m";
+    $("tv-n-runs").firstChild.textContent = ac.total;
+    $("tv-s-runs").innerHTML = (ac.failed ? `<em class="crit">${N(ac.failed)} failed</em> · ` : "") + (live ? `<em>${live} running</em> · ` : "") + `<b>$${Math.round(ac.cost || 0)}</b>`;
+    $("tv-bars").innerHTML = ac.buckets.map(b => `<u class="${b.bad ? "bad" : ""}" style="height:${Math.max(4, b.n / mx * 100)}%"></u>`).join("");
+    $("tv-lanes").innerHTML = ac.lanes.map(l => `<div class="tl${l.live ? " live" : ""}"><div class="who"><b>${esc(l.name)}</b><span>${l.live ? "working now · " : ""}${N(l.n)} runs · ${dur(l.busy)}${l.bad ? " · " + N(l.bad) + " failed" : ""}</span></div><div class="track">` +
+      l.runs.map(r => `<i class="${r[2] === 2 ? "live" : r[2] === 1 ? "bad" : ""}" style="left:${(100 * (1 - r[0] / W)).toFixed(2)}%;width:${(100 * r[1] / W).toFixed(2)}%"></i>`).join("") + `</div></div>`).join("") +
+      `<div class="tl axis"><div class="who"></div><div class="track"><span>−24 h</span><span>−18 h</span><span>−12 h</span><span>−6 h</span><span>now</span></div></div>`;
+  }
+  const L = (cls, text, dim) => `<span class="${dim ? "dim" : ""}"><i class="${cls}"></i>${esc(text)}</span>`;
+  let h = "";
+  for (const g of M.gateways || []) h += L(g.ok ? "" : "r", g.label + (g.ok ? "" : " down"));
+  const t = S && S.trinity;
+  if (t && t.ok) h += L(t.agents.running === t.agents.total ? "" : "a", `agents ${N(t.agents.running)}/${N(t.agents.total)}`);
+  if (f.sync) h += L(f.monitoring ? "" : "a", "monitoring " + (f.monitoring ? "on" : "off")) + L(f.sync.red ? "r" : f.sync.diverged ? "a" : "", `git sync · ${N(f.sync.diverged)} diverged`);
+  const fl = S && S.fleet;
+  if (fl && fl.servers) { const inst = fl.servers.filter(x => /^trinity-/.test(x.name)), down = inst.filter(x => !x.online);
+    h += L(down.length ? "r" : "", `instances ${N(inst.length - down.length)}/${N(inst.length)}` + (down.length ? " · " + down.slice(0, 2).map(x => esc(x.name.replace(/^trinity-/, ""))).join(", ") + " off" : "")); }
+  h += L("", (t && esc(t.host) || "trinity") + (M.ts ? " · read " + age(M.ts) + " ago" : ""), true).replace('<i class=""></i>', "");
+  $("tv-lights").innerHTML = h;
+  renderStage(); placeTalk();
+}
+setInterval(() => { if (CFG.trinity && awake && performance.now() - mT > (view === "trinity" ? 20000 : 60000)) pollMarvin(); else if (M && view === "trinity") renderMarvin(); }, 5000);
+pollMarvin();
+wakeHooks.push(pollMarvin);
+
+// ---------- the other runtimes of this machine, and the parts it has no source for
+const RTN = { codex: "Codex", opencode: "OpenCode", gemini: "Gemini" };
+let rtKey = "";
+function renderRuntimes() {
+  const P = S.parts || {}, R = (Array.isArray(S.runtimes) ? S.runtimes : []).filter(r => r.key !== "claude");
+  const key = JSON.stringify([P, R]);
+  if (key === rtKey) return;
+  rtKey = key;
+  document.body.classList.toggle("no-claude", P.claude === false);
+  document.body.classList.toggle("no-fleet", P.fleet === false && !CFG.backup);
+  $("subs-l").textContent = P.claude === false ? "Runtimes" : "Subscriptions";
+  // a runtime gets a row when it was used in these 7 days; the rest are named only where the panel has little else to show
+  const read = R.filter(r => r.read && (r.sessions || r.live)), rest = P.claude === false ? R.filter(r => !read.includes(r) && r.key !== "ollama") : [];
+  const box = $("rts"), now = Date.now() / 1000 - clockSkew;
+  box.replaceChildren();
+  for (const r of read) {
+    const d = el("div", r.live ? "on" : ""), n = el("span");
+    n.innerHTML = `<b>${N(r.sessions)}</b> sessions · <b>${N(r.prompts)}</b> prompts`;
+    if (r.auto) d.title = `${r.auto} more ran unattended`;
+    d.append(el("i"), el("b", "", r.name), n, el("span", "", r.live ? r.live + " live" : r.last ? ago(now - r.last) + " ago" : ""));
+    box.append(d);
+  }
+  if (rest.length) box.append(el("p", "", "Also here: " + rest.map(r => r.name + (r.read ? " (not used lately)" : " (not read)")).join(", ")));
+  box.hidden = !box.children.length;
+  $("rts-h").hidden = box.hidden || P.claude === false;       // without Claude Code the panel's own title says it
+  if (P.claude === false) $("subs-n").textContent = `${read.length} read · 7 days`;
+  sessKey = 0;                                               // the list below is cut to the room that is left
+}
+
+// The first-run card: what the survey found here, once (setup turns it on; Got it turns it off). ?welcome shows it again.
+if (CFG.welcome || QS.has("welcome")) fetch("/survey.json").then(r => r.json()).then(d => {
+  const skip = ["macOS", "python", "agents", "chrome", "swiftc", "config"], marks = { ok: "✓", note: "·", none: "○", MISS: "!" };
+  const who = d.agent || CFG.voice[0].name;
+  $("wc-t").textContent = `What ${who} found on this Mac`;
+  $("wc-l").innerHTML = (d.lines || []).filter(l => !skip.includes(l[1])).map(l =>
+    `<div class="${esc(l[0])}"><i>${marks[l[0]] || "·"}</i><b>${esc(l[1])}</b><span>${esc(l[2]).replace(/`([^`]+)`/g, "<code>$1</code>")}</span></div>`).join("");
+  $("wc-m").textContent = `The deck shows what has a source here and leaves the rest out. To change any of it, ask ${who}.`;
+  $("welcome").hidden = !(d.lines || []).length;
+}).catch(() => {});
+$("wc-ok").onclick = () => { $("welcome").hidden = true; if (CFG.welcome) voicePost("/welcome/done", {}).catch(() => {}); };
+
+function renderPanels() {
+  const m = S.machine, u = S.usage;
+  renderRuntimes();
+  $("host").textContent = `${m.host} · up ${ago(m.uptime)}`;
+  $("cpu-sub").textContent = `load ${m.load[0].toFixed(2)} · ${m.cores.length} cores · ${m.nproc} processes`;
+  $("mem-v").innerHTML = `${gb(m.mem.used)}<i>/ ${Math.round(m.mem.total / 2 ** 30)} GB</i>`;
+  $("mem-v").classList.toggle("warn", m.mem.pct > 90);
+  $("mem-sub").textContent = `${Math.round(m.mem.pct)}% used · swap ${gb(m.mem.swap)} GB`;
+  $("net-v").innerHTML = `${rate(m.net.down).replace(" ", "<i>")}</i>`;
+  $("net-sub").textContent = `↓ down   ↑ ${rate(m.net.up)}`;
+  const pw = m.battery ? ` · ${m.battery.plugged ? "AC" : "battery"} <b class="${m.battery.pct < 15 && !m.battery.plugged ? "warn" : ""}">${Math.round(m.battery.pct)}%</b>` : "";
+  $("minor").innerHTML = `disk <b class="${m.disk.pct > 97 ? "warn" : ""}">${gb(m.disk.free)} GB</b> free · load <b>${m.load[0].toFixed(1)}</b>${pw}`;
+  renderRemote();
+
+  // agents
+  const now = Date.now() / 1000 - clockSkew, list = $("agents"), A = S.agents;
+  const busy = A.filter(a => a.busy).length, MAX = 10;
+  $("agent-count").textContent = `${busy} working · ${A.length - busy} idle`;
+  list.replaceChildren();
+  for (const a of A.slice(0, MAX)) {
+    const r = el("div", "agent" + (a.busy ? " busy" : ""));
+    const p = el("span", "p", a.project);
+    if (a.rt && a.rt !== "claude") p.append(el("small", "", RTN[a.rt] || a.rt));
+    r.append(el("span", "dot"), p, el("span", "t", (a.busy ? "working " : "idle ") + ago(now - a.since)));
+    if (a.title) r.append(el("div", "title", a.title.replace(/^SESSION:\s*/, "")));
+    if (a.status) r.append(el("div", "status", a.status));
+    list.append(r);
+  }
+  let shown = Math.min(A.length, MAX);
+  const room = () => $("right").getBoundingClientRect().bottom - list.getBoundingClientRect().top - parseFloat(getComputedStyle(document.body).fontSize) * 2;
+  while (shown > 1 && list.scrollHeight > room()) { list.lastChild.remove(); shown--; }
+  $("more").textContent = A.length > shown ? `+ ${A.length - shown} more` : "";
+
+  const usageKey = JSON.stringify([u.heat, u.hours_today, u.today, new Date().getHours()]);
+  if (usageKey !== lastUsageKey) { lastUsageKey = usageKey;
+  // heatmap: quantile buckets so one monster day does not flatten the rest
+  const heat = $("heat"), vals = u.heat.filter(v => v > 0).sort((a, b) => a - b);
+  const q = p => vals[Math.floor(p * (vals.length - 1))] || 1;
+  const cuts = [q(.25), q(.5), q(.75), q(.92)], shades = SKIN.heat;
+  heat.replaceChildren();
+  u.heat.forEach((v, i) => { const c = el("i"); const lvl = v ? 1 + cuts.filter(x => v > x).length : 0;
+    c.style.background = shades[lvl]; if (i === u.heat.length - 1) c.className = "today"; heat.append(c); });
+  $("today").textContent = `${u.today.prompts} prompts today`;
+  $("totals").innerHTML = u.total.since ?
+    `<b>${big(u.total.week)}</b> prompts in 7 days · <b>${big(u.total.prompts)}</b> since ${new Date(u.total.since).toLocaleDateString("en-GB", { month: "short", year: "numeric" })} · all accounts` : "";
+
+  // hours: all-time shape (grey) with today's prompts on top (cyan)
+  const hours = $("hours"), hmax = Math.max(1, ...u.hours), tmax = Math.max(1, ...u.hours_today), nowH = new Date().getHours();
+  hours.replaceChildren();
+  u.hours.forEach((v, h) => { const d = el("div", h === nowH ? "now" : ""), a = el("u"), b = el("b");
+    a.style.height = Math.max(2, v / hmax * 100) + "%"; b.style.height = (u.hours_today[h] / tmax * 100) + "%";
+    d.append(a, b); hours.append(d); });
+  $("peak").textContent = `usual peak ${String(u.hours.indexOf(hmax)).padStart(2, "0")}:00`;
+
+  }
+  // fleet + backup
+  const f = S.fleet, fl = $("fleet"); fl.replaceChildren();
+  if (f && f.servers) {
+    $("fleet-n").textContent = `${f.online}/${f.total} online`;
+    for (const s of f.servers.slice(0, 10)) fl.append(el("div", s.online ? "" : "off", s.name.replace(/^trinity-/, "")));
+  } else $("fleet-n").textContent = "tailscale n/a";
+  const b = S.backup, be = document.querySelector(".backup");
+  if (b && b.last) { const age = now - b.last;
+    be.innerHTML = `${esc((CFG.backup && CFG.backup.label) || "Backup")} <b>${ago(age)} ago</b> ${b.ok ? "✓" : "✗ failed"}`;
+    be.classList.toggle("warn", !b.ok || age > 3 * 3600); }
+
+  // feed
+  const feed = $("feed"); feed.replaceChildren();
+  for (const e of (u.feed || []).slice(-7).reverse()) {
+    const r = el("div", e.kind); r.append(el("span", "", hhmm(e.ts)), el("em", "", e.kind === "prompt" ? "▸" : "✓"));
+    const t = el("b", "", e.project); r.append(t); t.append(document.createTextNode(e.kind === "prompt" ? "  asked" : "  answered"));
+    feed.append(r);
+  }
+}
+
+// ---------- sessions view panels (data changes about once a minute)
+let sessKey = 0;
+function renderSessions() {
+  const X = S.sessions;
+  if (!X || !X.ready || X.ts === sessKey) return;
+  sessKey = X.ts;
+  const now = Date.now() / 1000 - clockSkew;
+  accColor.clear();
+  for (const a of X.accounts) if (a.ci >= 0) accColor.set(a.id, ACC[a.ci % ACC.length]);
+
+  const subs = $("subs"); subs.replaceChildren();
+  const live = X.accounts.reduce((n, a) => n + a.live, 0);
+  if (!document.body.classList.contains("no-claude")) $("subs-n").textContent = `${X.accounts.filter(a => a.week.out > 0).length} used · ${X.window} days`;
+  const limit = (name, pct, at) => {
+    const out = [el("span", "", name)], bar = el("div", "bar"), b = el("b");
+    if (pct == null) { b.style.width = "0"; bar.append(b); out.push(bar, el("span", "", "–")); return out; }
+    b.style.width = Math.min(100, pct) + "%"; b.className = pct >= 80 ? "hi" : pct >= 50 ? "mid" : ""; bar.append(b);
+    const v = el("span", "v" + (pct >= 80 ? " warn" : ""), Math.round(pct) + "%");
+    if (at > now) v.append(Object.assign(el("span", "", " ↻" + (at - now >= 86400 ? Math.round((at - now) / 86400) + "d" : ago(at - now).replace(" ", ""))), { style: "color:var(--dim)" }));
+    out.push(bar, v); return out;
+  };
+  for (const a of X.accounts) {
+    const r = el("div", "sub"); r.style.setProperty("--c", colorOf(a.id));
+    const sn = el("div", "sn"); sn.append(el("i"), el("span", "", a.name), el("em", "", a.live ? `${a.live} live` : ""));
+    r.append(sn);
+    const L = a.limits, lim = el("div", "lim");
+    if (L) lim.append(...limit("5h", L.five, L.five_at), ...limit("wk", L.week, L.week_at));
+    else { lim.style.display = "block"; lim.textContent = "limits show after its next reply"; }
+    if (L || a.live) r.append(lim);
+    for (const [name, p] of [["today", a.today], [X.window + " days", a.week]]) {
+      if (name === "today" && !p.out && !p.prompts) continue;
+      const n = el("div", "nums"); n.append(el("span", "", name));
+      for (const [v, unit] of [[p.sessions, "sessions"], [p.prompts, "prompts"], [big(p.out), "tokens"]]) {
+        const c = el("span"); c.append(el("b", "", v), document.createTextNode(" " + unit)); n.append(c);
+      }
+      r.append(n);
+    }
+    subs.append(r);
+  }
+
+  // tokens written per day, stacked by subscription
+  const days = $("days"), tot = Array.from({ length: X.days }, (_, d) => X.accounts.reduce((s, a) => s + a.days[d], 0));
+  const dmax = Math.max(1, ...tot);
+  days.replaceChildren();
+  for (let d = 0; d < X.days; d++) {
+    const col = el("div");
+    for (const a of X.accounts) if (a.days[d]) { const s = el("i"); s.style.setProperty("--c", colorOf(a.id)); s.style.height = (a.days[d] / dmax * 100) + "%"; col.append(s); }
+    days.append(col);
+  }
+  $("days-n").textContent = X.days; $("days-max").textContent = `today ${big(tot[X.days - 1])} · peak ${big(dmax)}`;
+
+  const rec = $("recent"); rec.replaceChildren();
+  $("recent-n").textContent = `${X.sessions_week} in ${X.window} days`;
+  const today = new Date().toDateString();
+  for (const s of X.recent) {
+    const d = new Date(s.start * 1000), r = el("div", s.live ? "live" : "");
+    const when = d.toDateString() === today ? hhmm(s.start) : d.toLocaleDateString("en-GB", { weekday: "short" }) + " " + hhmm(s.start);
+    const dot = el("i"), other = s.rt && s.rt !== "claude";
+    if (other) r.classList.add("rt"); else dot.style.setProperty("--c", colorOf(s.acct));
+    r.append(el("span", "", when), dot, el("b", "", s.project), el("span", "", (other ? (RTN[s.rt] || s.rt) + " · " : "") + s.title));
+    rec.append(r);
+  }
+  const fs = parseFloat(getComputedStyle(document.body).fontSize);
+  while (rec.children.length > 2 && rec.getBoundingClientRect().bottom > $("right").getBoundingClientRect().bottom - fs * .4) rec.lastChild.remove();
+  syncGraph(X.graph);
+}
+
+function tickClock() {
+  if (!awake) return;
+  const d = new Date(), p = n => String(n).padStart(2, "0");
+  $("clock").innerHTML = `${p(d.getHours())}:${p(d.getMinutes())}<small>${p(d.getSeconds())}</small>`;
+  $("date").textContent = d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+  $("offline").style.display = performance.now() - lastPush > 12000 ? "block" : "none";
+}
+setInterval(tickClock, 1000); tickClock();
+
+// ---------- the core (canvas)
+const cv = $("bg"), g = cv.getContext("2d");
+let W = 0, H = 0, R = 0, cx = 0, cy = 0;
+function resize() {
+  const dpr = devicePixelRatio || 1; W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  R = Math.min(W, H) * 0.165; cx = W * 0.485; cy = H * 0.42;
+}
+addEventListener("resize", resize); resize();
+
+const stars = Array.from({ length: 140 }, () => ({ x: Math.random(), y: Math.random(), z: .2 + Math.random() * .8, p: Math.random() * TAU }));
+const swirl = Array.from({ length: 150 }, () => ({ a: Math.random() * TAU, r: .12 + Math.random() * .42, s: .4 + Math.random(), w: .5 + Math.random() * 1.4 }));
+
+function syncNodes() {
+  const ids = S.agents.map(a => a.id).sort();
+  for (const id of [...nodes.keys()]) if (!ids.includes(id)) nodes.delete(id);
+  S.agents.forEach(a => {
+    const slot = ids.indexOf(a.id) / ids.length * TAU;
+    const n = nodes.get(a.id) || { ang: slot, glow: 0, x: cx, y: cy, born: performance.now() };
+    n.slot = slot; n.a = a; nodes.set(a.id, n);
+  });
+}
+
+function arc(r, a0, a1, color, width, alpha) {
+  g.beginPath(); g.arc(cx, cy, r, a0, a1); g.strokeStyle = color; g.globalAlpha = alpha; g.lineWidth = width; g.lineCap = "round"; g.stroke(); g.globalAlpha = 1;
+}
+
+let last = performance.now(), spin = 0, orbit = 0;
+// The motion is slow; 30 looks the same as 60 at about half the cost. Override with ?fps=60.
+const FPS = +new URLSearchParams(location.search).get("fps") || 30;
+function frame(t) {
+  if (!awake) return;                       // asleep: the loop stops; checkAwake() restarts it
+  // The talking face is rendered on the same GPU. With TALK in front nothing here moves, so draw
+  // twice a second; with a conversation running behind another view, draw at a reduced rate.
+  const fps = VA[view] && al[view] >= 1 ? 2 : talk.url ? 12 : FPS;
+  if (t - last < 1000 / fps - 3) { schedule(); return; }
+  const dt = Math.min(.1, (t - last) / 1000); last = t; window.__frames++;
+  $("agents").style.setProperty("--beat", (.675 + .325 * Math.cos(t / 223)).toFixed(2));
+  if (DEBUG && window.__frames % 15 === 0) document.title = `FD ${window.__frames} ${document.visibilityState} ${window.__err}`;
+  g.clearRect(0, 0, W, H);
+
+  // slow drift of the whole layout: nothing sits on the same pixels for hours
+  const dx = Math.sin(t / 47000) * 7, dy = Math.cos(t / 61000) * 5;
+  $("stage").style.transform = `translate(${dx.toFixed(2)}px, ${dy.toFixed(2)}px)`;
+  g.save(); g.translate(dx, dy);
+
+  if (S) {
+    sm.cpu = tget("cpu", t); sm.mem = tget("mem", t); sm.disk = tget("disk", t);
+    S.machine.cores.forEach((v, i) => sm.cores[i] = tget("core" + i, t));
+    const frac = Math.min(1, (t - lastPush) / pushGap);
+    spark($("cpu-s"), [hist.cpu], [C.cyan], 100, frac);
+    spark($("mem-s"), [hist.mem], [C.violet], 100, frac);
+    spark($("net-s"), [hist.down, hist.up], [C.green, C.amber], tget("netmax", t), frac);
+    if (Math.round(sm.cpu) !== shownCpu) { shownCpu = Math.round(sm.cpu); $("cpu-v").innerHTML = `${shownCpu}<i>%</i>`; }
+  }
+
+  // which view: cycle unless pinned; each view fades in and out on its own alpha
+  const hasGraph = !!(S && S.sessions && S.sessions.ready), hasAtt = !!(S && S.attention && S.attention.ready);
+  const usable = { deck: true, sessions: hasGraph, attention: hasAtt, trinity: !!(CFG.desk && M && M.ok), talk: true };
+  if (pin === "auto" && (t - viewT > DWELL[view] || !usable[view])) {
+    let n = VIEWS.indexOf(view);
+    do { n = (n + 1) % VIEWS.length; } while (!usable[VIEWS[n]]);
+    setView(VIEWS[n]);
+  }
+  for (const v of ALLV) al[v] += Math.max(-dt / .9, Math.min(dt / .9, (view === v ? 1 : 0) - al[v]));
+  mix = 1 - al.deck;
+  const alTalk = Math.min(1, al.talk + al.second + (TVPLAIN ? 0 : al.trinity));
+  const key = al.deck + "/" + al.sessions + "/" + al.attention + "/" + al.trinity + "/" + alTalk;
+  if (key !== shownMix) { shownMix = key; $("talk").style.opacity = alTalk; $("talk").style.pointerEvents = hereAgent() ? "auto" : "none"; $("p-agents").style.opacity = al.deck; $("p-subs").style.opacity = al.sessions; $("p-att").style.opacity = al.attention; $("tv").style.opacity = al.trinity; $("tv").style.pointerEvents = view === "trinity" ? "auto" : "none"; }
+
+  if (S && mix < 1) {
+    const m = S.machine, k = 1 - Math.pow(.03, dt);
+    const busyN = S.agents.filter(a => a.busy).length;
+    sm.busy = lerp(sm.busy, busyN ? 1 : 0, k);
+    const load = sm.cpu / 100;
+
+    // halo
+    const halo = g.createRadialGradient(cx, cy, R * .1, cx, cy, R * 2.3);
+    halo.addColorStop(0, `rgba(${SKIN.halo},${.10 + load * .12})`); halo.addColorStop(.45, `rgba(255,176,74,${.035 * sm.busy})`); halo.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = halo; g.fillRect(cx - R * 2.4, cy - R * 2.4, R * 4.8, R * 4.8);
+
+    // swirl: speed and brightness follow CPU
+    spin += dt * (.25 + load * 2.6);
+    for (const p of swirl) {
+      const a = p.a + spin * p.s, r = R * p.r * (1 + .05 * Math.sin(t / 900 + p.a * 3)), tail = .10 + load * .5;
+      g.beginPath(); g.arc(cx, cy, r, a - tail * p.s, a);
+      g.strokeStyle = C.cyan; g.globalAlpha = .12 + .5 * load * p.s; g.lineWidth = p.w; g.lineCap = "round"; g.stroke();
+    }
+    g.globalAlpha = 1;
+
+    // per-core radial bars (E-cores first on Apple Silicon)
+    const n = sm.cores.length, eCores = n - (m.pcores || n), seg = TAU / n;
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + i * seg + seg / 2, v = sm.cores[i] / 100, r0 = R * .68, r1 = r0 + R * .04 + R * .22 * v;
+      const col = i < eCores ? C.violet : C.cyan;
+      g.beginPath(); g.arc(cx, cy, (r0 + r1) / 2, a - seg * .36, a + seg * .36);
+      g.strokeStyle = col; g.globalAlpha = .22 + .78 * v; g.lineWidth = r1 - r0; g.lineCap = "butt"; g.stroke();
+    }
+    g.globalAlpha = 1;
+
+    // gauge arcs: 270° sweep, gap at the bottom
+    const A0 = Math.PI * .75, SW = Math.PI * 1.5;
+    [[1.02, sm.cpu, C.cyan, "CPU"], [1.10, sm.mem, C.violet, "MEM"], [1.18, sm.disk, sm.disk > 90 ? C.red : C.green, "DISK"]].forEach(([k2, v, col, name], i) => {
+      arc(R * k2, A0, A0 + SW, C.ink, 1, .09);
+      arc(R * k2, A0, A0 + SW * Math.min(1, v / 100), col, R * .022, .95);
+      g.font = SKIN.mono(R * .072); g.textAlign = "center"; g.fillStyle = col; g.globalAlpha = .95;
+      g.fillText(`${name} ${Math.round(v)}%`, cx + (i - 1) * R * .62, cy + R * 1.2); g.globalAlpha = 1;
+    });
+
+    // centre readout
+    g.textAlign = "center"; g.fillStyle = busyN ? C.amber : C.ink;
+    g.font = `200 ${R * .62}px ${SKIN.sans}`;
+    g.fillText(String(busyN), cx, cy + R * .16);
+    g.font = SKIN.mono(R * .068); g.fillStyle = C.dim;
+    g.fillText(busyN ? `OF ${S.agents.length} AGENTS WORKING` : S.agents.length ? `${S.agents.length} AGENTS · ALL QUIET` : "NO AGENTS", cx, cy + R * .34);
+
+    // agents in orbit
+    orbit += dt * TAU / 300;
+    const rx = R * 1.6, ry = R * 1.5;
+    g.beginPath(); g.ellipse(cx, cy, rx, ry, 0, 0, TAU); g.strokeStyle = C.ink; g.globalAlpha = .07; g.lineWidth = 1; g.setLineDash([2, 7]); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+    const now = Date.now() / 1000 - clockSkew;
+    for (const nd of nodes.values()) {
+      let d = nd.slot - nd.ang; d = Math.atan2(Math.sin(d), Math.cos(d)); nd.ang += d * k;
+      const a = nd.ang + orbit; nd.x = cx + Math.cos(a) * rx; nd.y = cy + Math.sin(a) * ry;
+      nd.glow = lerp(nd.glow, nd.a.busy ? 1 : 0, k);
+      const col = nd.a.busy ? C.amber : C.cyan, rad = R * (.035 + .02 * nd.glow);
+      if (nd.glow > .02) {
+        // tether to the core + sparks flowing inward
+        const mx = (nd.x + cx) / 2 - (nd.y - cy) * .22, my = (nd.y + cy) / 2 + (nd.x - cx) * .22;
+        g.beginPath(); g.moveTo(nd.x, nd.y); g.quadraticCurveTo(mx, my, cx + (nd.x - cx) * .32, cy + (nd.y - cy) * .32);
+        g.strokeStyle = C.amber; g.globalAlpha = .16 * nd.glow; g.lineWidth = 1; g.stroke(); g.globalAlpha = 1;
+        if (nd.a.busy && Math.random() < dt * 9) sparks.push({ nd, mx, my, t: 0, s: .55 + Math.random() * .5 });
+        const gl = g.createRadialGradient(nd.x, nd.y, 0, nd.x, nd.y, rad * 5);
+        gl.addColorStop(0, `rgba(255,176,74,${.4 * nd.glow})`); gl.addColorStop(1, "rgba(255,176,74,0)");
+        g.fillStyle = gl; g.fillRect(nd.x - rad * 5, nd.y - rad * 5, rad * 10, rad * 10);
+      }
+      const beat = nd.a.busy ? 1 + .14 * Math.sin(t / 220) : 1;
+      g.beginPath(); g.arc(nd.x, nd.y, rad * beat, 0, TAU);
+      g.fillStyle = col; g.globalAlpha = .12 + .88 * nd.glow; g.fill(); g.globalAlpha = 1;
+      g.strokeStyle = col; g.lineWidth = 1.2; g.globalAlpha = nd.a.busy ? 1 : .55; g.stroke(); g.globalAlpha = 1;
+
+      // label on the outside of the orbit
+      const side = Math.abs(Math.cos(a)) < .8, out = Math.cos(a) >= 0 ? 1 : -1;
+      const lx = side ? nd.x + out * rad * 2.2 : nd.x, ly = side ? nd.y + R * .02 : nd.y + rad * 2 + R * .09;
+      g.textAlign = side ? (out > 0 ? "left" : "right") : "center";
+      g.font = `500 ${R * .082}px ${SKIN.sans}`; g.fillStyle = nd.a.busy ? C.amber : C.ink; g.globalAlpha = nd.a.busy ? 1 : .7;
+      g.fillText(nd.a.project, lx, ly);
+      g.font = SKIN.mono(R * .058); g.fillStyle = C.dim; g.globalAlpha = 1;
+      g.fillText((nd.a.busy ? "working " : "idle ") + ago(now - nd.a.since), lx, ly + R * .085);
+    }
+
+    for (let i = sparks.length - 1; i >= 0; i--) {
+      const s = sparks[i]; s.t += dt * s.s; if (s.t >= 1) { sparks.splice(i, 1); continue; }
+      const u = s.t, ex = cx + (s.nd.x - cx) * .32, ey = cy + (s.nd.y - cy) * .32;
+      const x = (1 - u) ** 2 * s.nd.x + 2 * (1 - u) * u * s.mx + u * u * ex, y = (1 - u) ** 2 * s.nd.y + 2 * (1 - u) * u * s.my + u * u * ey;
+      g.beginPath(); g.arc(x, y, 1.6, 0, TAU); g.fillStyle = C.amber; g.globalAlpha = Math.sin(u * Math.PI); g.fill();
+    }
+    g.globalAlpha = 1;
+
+    // ripples: a prompt (amber) or an answer (green) just landed
+    for (let i = ripples.length - 1; i >= 0; i--) {
+      const r = ripples[i]; r.t += dt / 1.8; if (r.t >= 1) { ripples.splice(i, 1); continue; }
+      const x = r.node ? r.node.x : cx, y = r.node ? r.node.y : cy;
+      g.beginPath(); g.arc(x, y, R * (.06 + r.t * (r.node ? .55 : 1.5)), 0, TAU);
+      g.strokeStyle = r.color; g.globalAlpha = (1 - r.t) * .8; g.lineWidth = 1.5; g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+  if (mix > 0 && mix < 1) { g.fillStyle = css("--bg"); g.globalAlpha = mix; g.fillRect(-30, -30, W + 60, H + 60); g.globalAlpha = 1; }
+
+  for (const s of stars) {
+    s.x -= dt * .0016 * s.z; if (s.x < 0) s.x += 1;
+    g.globalAlpha = (.12 + .2 * (0.5 + 0.5 * Math.sin(t / 1700 + s.p))) * s.z;
+    g.fillStyle = C.ink; g.fillRect(s.x * W, s.y * H, s.z * 1.5, s.z * 1.5);
+  }
+  g.globalAlpha = 1;
+
+  if (hasGraph && al.sessions > 0) drawGraph(t, dt, al.sessions);
+  if (hasAtt && al.attention > 0) drawAttention(t, al.attention);
+
+  g.restore();
+  schedule();
+}
+
+// ---------- attention view
+const projColor = new Map();
+const pcol = p => projColor.get(p) || SKIN.none;
+const dur = s => s == null ? "–" : s < 90 ? Math.round(s) + "s" : s < 5400 ? Math.round(s / 60) + "m" : Math.floor(s / 3600) + "h " + String(Math.round(s % 3600 / 60)).padStart(2, "0") + "m";
+let attKey = "";
+function renderAttention() {
+  const A = S.attention; if (!A || !A.ready) return;
+  const key = JSON.stringify([A.today, A.share, A.days.length]); if (key === attKey) return; attKey = key;
+  projColor.clear(); A.share.forEach((p, i) => projColor.set(p.project, ACC[i % ACC.length]));
+  A.lanes.forEach(p => { if (!projColor.has(p)) projColor.set(p, ACC[projColor.size % ACC.length]); });
+  const T = A.today, U = A.usual;
+  // compare today with the usual day: lowerBetter decides which direction is the good one
+  const cmp = (v, u, lowerBetter, fmt) => { if (v == null || u == null) return "";
+    const good = lowerBetter ? v <= u * 1.1 : v >= u * .9;
+    return ` · usual <b>${fmt(u)}</b> <em class="${good ? "ok" : "up"}">${v > u * 1.1 ? "▲" : v < u * .9 ? "▼" : "≈"}</em>`; };
+  const one = n => n.toFixed(1), cards = [];
+  cards.push(["Focus", T.longest ? dur(T.longest.s) : "–", T.longest ? `longest block · <b>${esc(T.longest.project)}</b> · ${T.blocks} blocks` : "no prompts yet today"]);
+  cards.push(["Focused share", T.present ? Math.round(T.deep / T.present * 100) + "<i>%</i>" : "–",
+    `time in blocks of 10 min+` + (U.present ? ` · usual <b>${Math.round(U.deep / U.present * 100)}%</b>` : "")]);
+  cards.push(["Switches", T.switches + (T.per_hour != null ? `<i>${one(T.per_hour)} / h</i>` : ""),
+    `to another project` + cmp(T.per_hour, U.per_hour, true, v => one(v) + " / h")]);
+  cards.push(["Reply time", dur(T.reply), `agents waited for you` + cmp(T.reply, U.reply, true, dur)]);
+  cards.push(["Agents per you", T.parallel != null ? one(T.parallel) : "–", `working at once` + cmp(T.parallel, U.parallel, false, one)]);
+  $("att-n").textContent = `${dur(T.present)} at the keys`;
+  $("att-cards").innerHTML = cards.map(c => `<div class="att"><span class="k">${c[0]}</span><span class="v">${c[1]}</span><div class="n">${c[2]}</div></div>`).join("");
+  const smax = Math.max(1, ...A.share.map(p => p.day || 0)), wmax = Math.max(1, ...A.share.map(p => p.week));
+  const today = A.share.some(p => p.day);
+  $("att-share").innerHTML = A.share.slice(0, 6).map(p =>
+    `<div style="--c:${pcol(p.project)}"><i></i><b>${esc(p.project)}</b><u><s style="width:${(today ? p.day / smax : p.week / wmax) * 100}%"></s></u><span>${p.day}</span><span>${p.week}</span></div>`).join("");
+  const dmax = Math.max(3600, ...A.days.map(d => d.present));
+  $("att-days").innerHTML = A.days.map(d => `<div><i class="deep" style="height:${d.deep / dmax * 100}%"></i><i style="height:${(d.present - d.deep) / dmax * 100}%"></i></div>`).join("");
+  $("att-days-n").textContent = U.present ? `usual ${dur(U.present)}` : "";
+  const end = $("p-att").getBoundingClientRect().bottom;
+  for (const r of $("att-share").children) r.style.display = "";
+  const rows = [...$("att-share").children];
+  while (rows.length > 2 && $("att-days").getBoundingClientRect().bottom > end) rows.pop().style.display = "none";
+}
+
+// The centre of the attention view: today as a timeline. Top ribbon = where the attention was
+// (focus blocks, one colour per project); below, one lane per project: agent working (solid),
+// agent waiting for the next prompt (thin amber), each prompt a tick.
+function drawAttention(t, ga) {
+  const A = S.attention, now = Date.now() / 1000 - clockSkew;
+  const A_ = a => { g.globalAlpha = Math.max(0, Math.min(1, a * ga)); };
+  const x0 = cx - W * .158, x1 = cx + W * .215, y0 = H * .125, lanes = A.lanes;
+  const t0 = A.t0, t1 = Math.max(now, t0 + 1800), X = v => x0 + (Math.max(t0, Math.min(t1, v)) - t0) / (t1 - t0) * (x1 - x0);
+  const fs = R * .072;
+  g.textAlign = "center"; g.font = SKIN.mono(R * .062); g.fillStyle = C.dim; A_(.9);
+  g.fillText(`ATTENTION TODAY  ·  ${A.today.prompts} PROMPTS  ·  ${A.today.switches} SWITCHES`, cx, H * .092);
+  if (!A.prompts.length) { A_(.6); g.fillText("no prompts yet today", cx, H * .4); g.globalAlpha = 1; return; }
+
+  // hour grid
+  g.font = SKIN.mono(fs * .86); g.lineWidth = 1;
+  const laneH = Math.min(H * .062, (H * .47) / Math.max(1, lanes.length)), ribbonH = H * .034;
+  const yL = y0 + ribbonH + H * .05, yEnd = yL + lanes.length * laneH;
+  const step = (t1 - t0) > 6 * 3600 ? 7200 : (t1 - t0) > 2.5 * 3600 ? 3600 : 1800;
+  const d0 = new Date(t0 * 1000); d0.setMinutes(0, 0, 0);
+  for (let h = d0.getTime() / 1000; h <= t1; h += step) { if (h < t0) continue;
+    const x = X(h); A_(.5); g.strokeStyle = SKIN.grid; g.beginPath(); g.moveTo(x, y0 - 4); g.lineTo(x, yEnd + 4); g.stroke();
+    const d = new Date(h * 1000); g.fillStyle = C.dim; A_(.75);
+    g.fillText(String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"), x, yEnd + fs * 1.5); }
+
+  // ribbon: focus blocks
+  g.textAlign = "right"; g.fillStyle = C.dim; A_(.8); g.fillText("FOCUS", x0 - fs * .8, y0 + ribbonH * .68);
+  A_(.35); g.fillStyle = SKIN.ribbon; g.fillRect(x0, y0, x1 - x0, ribbonH);
+  for (const b of A.blocks) { const xa = X(b.a), xb = Math.max(xa + 2, X(b.b));
+    g.fillStyle = pcol(b.project); A_(b.b - b.a >= 600 ? .95 : .55); g.fillRect(xa, y0, xb - xa, ribbonH); }
+
+  // lanes
+  lanes.forEach((p, i) => { const y = yL + i * laneH, mid = y + laneH / 2, c = pcol(p);
+    g.textAlign = "right"; g.font = `${fs}px ${SKIN.sans2}`; g.fillStyle = c; A_(.95);
+    let name = p; while (g.measureText(name).width > W * .078 && name.length > 4) name = name.slice(0, -2); if (name !== p) name += "…";
+    g.fillText(name, x0 - fs * .8, mid + fs * .34);
+    A_(.5); g.strokeStyle = SKIN.grid2; g.beginPath(); g.moveTo(x0, mid); g.lineTo(x1, mid); g.stroke();
+    for (const w of A.wait) if (w.project === p) { A_(w.open ? .9 : .6); g.strokeStyle = C.amber; g.lineWidth = 1.5;
+      g.setLineDash([3, 4]); g.beginPath(); g.moveTo(X(w.a), mid); g.lineTo(X(w.open ? now : w.b), mid); g.stroke(); g.setLineDash([]); }
+    for (const w of A.work) if (w.project === p) { const xa = X(w.a), xb = Math.max(xa + 2, X(w.open ? now : w.b));
+      g.fillStyle = c; A_(w.open ? .55 + .3 * Math.sin(t / 400) : .8); g.fillRect(xa, mid - laneH * .19, xb - xa, laneH * .38); }
+    g.fillStyle = C.ink; A_(.95);
+    for (const q of A.prompts) if (q.project === p) g.fillRect(X(q.t) - .75, mid - laneH * .34, 1.5, laneH * .68);
+  });
+  g.lineWidth = 1;
+  // now line
+  A_(.8); g.strokeStyle = C.ink; g.beginPath(); g.moveTo(X(now), y0 - 6); g.lineTo(X(now), yEnd + 6); g.stroke();
+
+  // legend + who is waiting right now
+  g.textAlign = "left"; g.font = SKIN.mono(fs * .86);
+  let lx = x0; const ly = yEnd + fs * 3.6;
+  const leg = (draw, label) => { draw(lx, ly - fs * .3); g.fillStyle = C.dim; A_(.8); g.fillText(label, lx + fs * 1.7, ly); lx += fs * 2.6 + g.measureText(label).width; };
+  leg((x, y) => { g.fillStyle = C.ink; A_(.95); g.fillRect(x + fs * .6, y - fs * .45, 1.5, fs * .9); }, "your prompt");
+  leg((x, y) => { g.fillStyle = C.cyan; A_(.8); g.fillRect(x, y - fs * .22, fs * 1.3, fs * .44); }, "agent working");
+  leg((x, y) => { g.strokeStyle = C.amber; A_(.8); g.lineWidth = 1.5; g.setLineDash([3, 4]); g.beginPath(); g.moveTo(x, y); g.lineTo(x + fs * 1.3, y); g.stroke(); g.setLineDash([]); g.lineWidth = 1; }, "waiting for you");
+  if (A.waiting.length) { g.textAlign = "center"; g.fillStyle = C.amber; A_(.9);
+    g.fillText(`WAITING FOR YOU NOW: ` + A.waiting.slice(0, 4).map(w => `${w.project} ${dur(now - w.since)}`).join("  ·  "), cx, ly + fs * 2.2); }
+  g.globalAlpha = 1;
+}
+
+// ---------- topic graph (sessions view)
+// Nodes are topics (circles) and projects (hexagons), sized by how many sessions touch them and
+// coloured by the subscription that ran most of them; a link means sessions share both ends.
+// A small force layout runs in unit space (-1..1) and is stretched over the middle of the screen.
+const G = { nodes: new Map(), list: [], edges: [] };
+function hash01(s, salt) { let h = 2166136261 ^ salt; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return ((h >>> 0) % 10007) / 10007; }
+function syncGraph(gr) {
+  const ids = new Set(gr.nodes.map(n => n.id));
+  for (const id of [...G.nodes.keys()]) if (!ids.has(id)) G.nodes.delete(id);
+  const nmax = Math.max(1, ...gr.nodes.map(n => n.n));
+  G.list = gr.nodes.map(n => {
+    let o = G.nodes.get(n.id);
+    if (!o) { const a = hash01(n.id, 1) * TAU, r = .2 + .65 * hash01(n.id, 2);
+      o = { x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0, glow: 0, ph: hash01(n.id, 3) * TAU }; G.nodes.set(n.id, o); }
+    o.d = n; o.size = Math.sqrt(n.n / nmax); o.deg = 0; return o;
+  });
+  G.edges = gr.edges.map(([a, b, w, why]) => { G.list[a].deg++; G.list[b].deg++; return { a: G.list[a], b: G.list[b], w, why: why || "" }; });
+  G.themed = !!gr.themed;
+  for (let i = 0; i < 240; i++) stepGraph(1 / 30);              // settle before it is shown
+}
+function stepGraph(dt) {
+  const L = G.list, s = Math.min(2, dt * 30), SQ = 1.75;       // SQ: labels are wide, so rows may sit closer than columns
+  for (let i = 0; i < L.length; i++) for (let j = i + 1; j < L.length; j++) {
+    const a = L[i], b = L[j], dx = a.x - b.x, dy = (a.y - b.y) * SQ, d2 = dx * dx + dy * dy + .002, d = Math.sqrt(d2);
+    const f = .0021 * (1 + a.size + b.size) / d2 * s;
+    a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
+    const ox = .34 - Math.abs(dx), oy = .15 - Math.abs(a.y - b.y);   // labels would overlap: part the rows
+    if (ox > 0 && oy > 0) { const p = oy * .06 * s * (a.y > b.y || (a.y === b.y && i > j) ? 1 : -1); a.vy += p; b.vy -= p; }
+  }
+  for (const e of G.edges) {
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y, d = Math.hypot(dx, dy) + 1e-6;
+    const f = (d - (e.why ? .3 : .38)) * (e.why ? .016 : .011) * Math.sqrt(Math.min(e.w, 5)) * s;
+    e.a.vx += dx / d * f; e.a.vy += dy / d * f; e.b.vx -= dx / d * f; e.b.vy -= dy / d * f;
+  }
+  for (const n of L) {
+    const pull = n.deg ? .004 : .009;                          // loose nodes drift to the rim, not away
+    n.vx -= n.x * pull * s; n.vy -= n.y * pull * s;
+    n.vx *= .84; n.vy *= .84; n.x += n.vx; n.y += n.vy;
+    if (Math.abs(n.x) > 1) { n.x = Math.sign(n.x); n.vx *= -.3; }
+    if (Math.abs(n.y) > 1) { n.y = Math.sign(n.y); n.vy *= -.3; }
+  }
+}
+function drawGraph(t, dt, ga) {
+  stepGraph(dt);
+  const X = S.sessions, gy = H * .415, rx = W * .196, ry = H * .262, k = 1 - Math.pow(.03, dt);
+  const A = a => { g.globalAlpha = Math.max(0, Math.min(1, a * ga)); };
+  for (const n of G.list) {
+    n.px = cx + W * .012 + (n.x + Math.sin(t / 3100 + n.ph) * .012) * rx; n.py = gy + (n.y + Math.cos(t / 2700 + n.ph) * .012) * ry;
+    n.rad = R * (.03 + .075 * n.size); n.glow = lerp(n.glow, n.d.live ? 1 : 0, k);
+  }
+  // label boxes first: links are drawn under them, and link captions are placed around them
+  for (const n of G.list) {
+    const project = n.d.kind === "project", fs = project ? R * .084 : R * (.07 + .012 * n.size);
+    n.font = `${project ? 600 : 500} ${fs}px ${SKIN.sans}`; g.font = n.font;
+    const words = n.d.label.split(" "), cut = n.d.label.length > 17 && words.length > 1 ? Math.ceil(words.length / 2) : 0;
+    n.lines = cut ? [words.slice(0, cut).join(" "), words.slice(cut).join(" ")] : [n.d.label];
+    const tw = Math.max(...n.lines.map(l => g.measureText(l).width)), top = n.py + n.rad + R * .1 - fs * .95;
+    n.box = { x0: n.px - tw / 2 - 5, x1: n.px + tw / 2 + 5, y0: top, y1: top + fs * 1.25 + (n.lines.length - 1) * R * .085 };
+    n.dot = { x0: n.px - n.rad - 3, x1: n.px + n.rad + 3, y0: n.py - n.rad - 3, y1: n.py + n.rad + 3 };
+  }
+  const caps = [];
+  g.textAlign = "center"; g.font = SKIN.mono(R * .062); g.fillStyle = C.dim; A(.9);
+  g.fillText(`${G.themed ? "THEMES" : "TOPICS"} AND PROJECTS  ·  ${X.sessions_week} SESSIONS IN ${X.window} DAYS`, cx, H * .092);
+
+  for (const e of G.edges) {
+    const w = Math.min(e.w, 5), hot = Math.min(e.a.glow, e.b.glow);
+    const mx = (e.a.px + e.b.px) / 2 - (e.b.py - e.a.py) * .08, my = (e.a.py + e.b.py) / 2 + (e.b.px - e.a.px) * .08;
+    g.beginPath(); g.moveTo(e.a.px, e.a.py); g.quadraticCurveTo(mx, my, e.b.px, e.b.py);
+    if (e.why) {                                               // a declared relation between two themes
+      g.strokeStyle = C.violet; A(.55); g.lineWidth = 1.3; g.setLineDash([5, 5]); g.stroke(); g.setLineDash([]);
+      caps.push({ e, mx, my });
+      continue;
+    }
+    g.strokeStyle = hot > .3 ? C.amber : C.ink; A(.03 + .05 * w + .16 * hot); g.lineWidth = .5 + .42 * w; g.stroke();
+    if (hot > .3) {                                            // work in progress travels the link
+      const u = (t / 2600 + e.a.ph) % 1, x = (1 - u) ** 2 * e.a.px + 2 * (1 - u) * u * mx + u * u * e.b.px, y = (1 - u) ** 2 * e.a.py + 2 * (1 - u) * u * my + u * u * e.b.py;
+      g.beginPath(); g.arc(x, y, 1.8, 0, TAU); g.fillStyle = C.amber; A(Math.sin(u * Math.PI) * hot); g.fill();
+    }
+  }
+  for (const n of G.list) {
+    const col = colorOf(n.d.acct), project = n.d.kind === "project";
+    const beat = 1 + .08 * n.glow * Math.sin(t / 220), r = n.rad * beat;
+    if (n.glow > .02) {
+      const gl = g.createRadialGradient(n.px, n.py, 0, n.px, n.py, r * 3.2);
+      gl.addColorStop(0, `rgba(255,176,74,${.34 * n.glow * ga})`); gl.addColorStop(1, "rgba(255,176,74,0)");
+      g.globalAlpha = 1; g.fillStyle = gl; g.fillRect(n.px - r * 3.2, n.py - r * 3.2, r * 6.4, r * 6.4);
+    }
+    g.beginPath();
+    if (project) for (let i = 0; i < 6; i++) { const a = TAU * i / 6 + Math.PI / 6; g[i ? "lineTo" : "moveTo"](n.px + Math.cos(a) * r, n.py + Math.sin(a) * r); }
+    else g.arc(n.px, n.py, r, 0, TAU);
+    g.closePath();
+    g.fillStyle = css("--bg"); A(1); g.fill();                 // links pass behind nodes
+    g.fillStyle = col; A(project ? .1 : .26); g.fill();
+    g.strokeStyle = col; g.lineWidth = project ? 1.8 : 1.2; A(.95); g.stroke();
+    g.font = SKIN.mono(R * .056); g.fillStyle = project ? C.ink : col; A(.85);
+    if (r > R * .05) g.fillText(n.d.n, n.px, n.py + R * .02);
+  }
+  // names on a plate of background, so no link strikes through the text
+  const bg = css("--bg");
+  for (const n of G.list) {
+    const b = n.box; g.fillStyle = bg; A(.82);
+    g.beginPath(); g.roundRect(b.x0, b.y0, b.x1 - b.x0, b.y1 - b.y0, 4); g.fill();
+  }
+  for (const n of G.list) {
+    g.font = n.font; g.fillStyle = n.glow > .3 ? C.amber : C.ink; A(n.d.kind === "project" ? .95 : .8 + .2 * n.size);
+    n.lines.forEach((l, i) => g.fillText(l, n.px, n.py + n.rad + R * .1 + i * R * .085));
+  }
+  // link captions: slide each along its link to the first spot that covers no name, node or other caption
+  g.font = SKIN.mono(R * .052);
+  const hit = (a, b) => a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0, placed = [];
+  const clash = r => { let n = 0; for (const o of G.list) { if (hit(r, o.box)) n += 2; if (hit(r, o.dot)) n++; } for (const o of placed) if (hit(r, o)) n += 2; return n; };
+  for (const c of caps) {
+    const e = c.e, tw = g.measureText(e.why).width, hh = R * .04;
+    const at = u => { const x = (1 - u) ** 2 * e.a.px + 2 * (1 - u) * u * c.mx + u * u * e.b.px, y = (1 - u) ** 2 * e.a.py + 2 * (1 - u) * u * c.my + u * u * e.b.py;
+      return { x, y, x0: x - tw / 2 - 5, x1: x + tw / 2 + 5, y0: y - hh, y1: y + hh }; };
+    let best = at(e.cu || .5), score = clash(best);
+    if (score) for (const u of [.5, .42, .58, .34, .66, .26, .74, .18, .82]) {      // keep the old spot unless it collides
+      const r = at(u), sc = clash(r); if (sc < score) { best = r; score = sc; e.cu = u; if (!sc) break; } }
+    placed.push(best);
+    g.fillStyle = bg; A(.85); g.beginPath(); g.roundRect(best.x0, best.y0, best.x1 - best.x0, best.y1 - best.y0, 3); g.fill();
+    g.fillStyle = C.violet; A(.9); g.fillText(e.why, best.x, best.y + R * .017);
+  }
+  g.globalAlpha = 1;
+}
+schedule();
+</script>
+</body>
+</html>

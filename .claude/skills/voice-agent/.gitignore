@@ -1,0 +1,4 @@
+# Spoken conversations and the live session link stay off git.
+conversations/
+.runtime.json
+__pycache__/

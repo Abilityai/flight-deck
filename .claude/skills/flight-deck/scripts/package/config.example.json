@@ -1,0 +1,20 @@
+{
+  "port": 47600,
+  "voice": {
+    "port": 8766,
+    "skill": "~/.claude/skills/voice-agent",
+    "default_face": "android",
+    "agents": [
+      { "key": "marvin", "name": "Marvin", "root": "~/agents/marvin", "face": "android", "voice": "Charon" },
+      { "key": "second", "name": "Second", "root": "~/agents/second", "face": "alien", "voice": "Umbriel" }
+    ]
+  },
+  "remote": { "label": "Server", "ssh_host": "an-ssh-alias" },
+  "trinity": [
+    { "label": "Trinity", "server": "trinity", "claude_json": "~/.claude.json" },
+    { "label": "Lab", "url": "https://trinity.example.com/mcp", "keychain": "Lab" }
+  ],
+  "backup_log": "~/.config/restic/backup.log",
+  "backup_label": "Backup",
+  "desk": { "dir": "~/agents/second/.claude/skills/trinity-desk/desk", "voice": "second" }
+}
